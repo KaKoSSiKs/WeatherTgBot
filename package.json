@@ -1,0 +1,12 @@
+{
+  "name": "weather-tg-bot-monorepo",
+  "private": true,
+  "packageManager": "pnpm@9.0.0",
+  "workspaces": [
+    "bot",
+    "apps/*"
+  ],
+  "scripts": {
+    "prepare": "echo workspace ready"
+  }
+}
