@@ -8,46 +8,34 @@ datasource db {
 }
 
 model User {
-  id            Int           @id @default(autoincrement())
-  telegramId    String        @unique
-  languageCode  String?       // ru, en
-  units         String?       // metric/imperial
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  id            Int            @id @default(autoincrement())
+  telegramId    String         @unique
+  languageCode  String?
+  units         String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
   locations     Location[]
   notifications Notification[]
 }
 
 model Location {
-  id          Int        @id @default(autoincrement())
-  user        User       @relation(fields: [userId], references: [id])
-  userId      Int
-  name        String     // label, e.g. "Москва"
-  latitude    Float
-  longitude   Float
-  isPrimary   Boolean    @default(false)
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  id            Int             @id @default(autoincrement())
+  name          String
+  latitude      Float
+  longitude     Float
+  userId        Int
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  notifications Notification[]
 }
 
 model Notification {
-  id            Int            @id @default(autoincrement())
-  user          User           @relation(fields: [userId], references: [id])
-  userId        Int
-  location      Location?      @relation(fields: [locationId], references: [id])
-  locationId    Int?
-  name          String?        // optional custom title
-  type          NotificationType
-  scheduleJson  String?        // for cron-like schedules or one-off datetime
-  triggersJson  String?        // JSON array of trigger rules
-  paramsJson    String?        // selected weather params/detail level
-  enabled       Boolean        @default(true)
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-}
-
-enum NotificationType {
-  DAILY
-  ONE_OFF
-  TRIGGERED
+  id          Int       @id @default(autoincrement())
+  type        String
+  time        String?
+  days        String?
+  enabled     Boolean   @default(true)
+  userId      Int
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  locationId  Int?
+  location    Location? @relation(fields: [locationId], references: [id], onDelete: Cascade)
 }
