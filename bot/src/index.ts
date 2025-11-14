@@ -1,19 +1,22 @@
-import { createBot } from './bot';  
-import { registerStartCommand } from './commands/start';  
-import { appConfig } from './config';  
-import { logger } from './utils/logger';  
+import { createBot } from './bot';
+import { registerStartCommand, registerAddCommand, registerListCommand } from './commands';
+import { appConfig } from './config';
+import { logger } from './utils/logger';
 
-async function main() {  
-  const bot = createBot();  
-  registerStartCommand(bot);  
-  logger('Bot Token:', appConfig.BOT_TOKEN);  
-  await bot.api.getMe();  
-  logger('Bot is starting...');  
-  bot.start();  
+async function main() {
+  logger('Bot starting...');
+  logger('Bot Token:', appConfig.BOT_TOKEN);
+  const bot = createBot();
+  registerStartCommand(bot);
+  registerAddCommand(bot);
+  registerListCommand(bot);
+  await bot.api.getMe();
+  logger('Bot is ready and running');
+  bot.start();
 }  
 
-main().catch((err) => {  
-  logger('Fatal error', 'error');  
-  console.error(err);  
-  process.exit(1);  
+main().catch((err) => {
+  logger('Fatal error:', err);
+  console.error(err);
+  process.exit(1);
 });
