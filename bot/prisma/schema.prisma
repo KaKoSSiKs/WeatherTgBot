@@ -16,6 +16,8 @@ model User {
   updatedAt     DateTime       @updatedAt
   locations     Location[]
   notifications Notification[]
+
+  @@index([telegramId])
 }
 
 model Location {

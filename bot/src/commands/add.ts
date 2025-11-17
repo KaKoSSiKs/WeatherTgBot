@@ -1,7 +1,9 @@
 import type { Bot, Context } from 'grammy';
+import type { Location } from '@prisma/client';
 import { prisma } from '../db/prisma';
 import { getOrCreateUser } from '../db/user';
 import { logger } from '../utils/logger';
+import { DEFAULT_CITY, geocodeCity } from '../utils/geocoding';
 
 export function registerAddCommand(bot: Bot<Context>) {
   bot.command('add', async (ctx) => {
@@ -14,42 +16,83 @@ export function registerAddCommand(bot: Bot<Context>) {
 
       const user = await getOrCreateUser(telegramId, ctx.from?.language_code);
 
-      // Parse command arguments: /add type [time] [days] [locationId]
-      const args = ctx.message?.text?.split(' ').slice(1) || [];
+      const args = ctx.message?.text?.trim().split(/\s+/).slice(1) || [];
       const type = args[0];
       const time = args[1];
-      const days = args[2];
-      const locationIdStr = args[3];
+      const possibleDays = args[2];
+      let days: string | undefined;
+      let locationName = '';
 
-      if (!type) {
+      if (args.length >= 4) {
+        days = possibleDays;
+        locationName = args.slice(3).join(' ').trim();
+      } else if (args.length === 3) {
+        locationName = possibleDays ?? '';
+      }
+
+      if (!type || !time) {
         await ctx.reply(
-          'Использование: /add <тип> [время] [дни] [id_локации]\n\n' +
+          'Использование: /add <тип> <время> [дни] [местоположение]\n\n' +
             'Примеры:\n' +
-            '• /add daily 09:00\n' +
-            '• /add daily 09:00 1,2,3,4,5\n' +
-            '• /add weather 12:00\n' +
-            '• /add daily 09:00 1,2,3,4,5 1'
+            '• /add daily 09:00 Москва\n' +
+            '• /add daily 09:00 1,3,5 Москва'
         );
         return;
       }
 
-      // Validate locationId if provided
-      let locationId: number | undefined;
-      if (locationIdStr) {
-        const parsedLocationId = parseInt(locationIdStr, 10);
-        if (isNaN(parsedLocationId)) {
-          await ctx.reply('Ошибка: ID локации должен быть числом.');
+      let locationRecord: Location | null = null;
+      if (locationName) {
+        const geocoded = geocodeCity(locationName);
+        if (!geocoded) {
+          await ctx.reply(`Местоположение "${locationName}" не найдено.`);
           return;
         }
-        // Verify location belongs to user
-        const location = await prisma.location.findFirst({
-          where: { id: parsedLocationId, userId: user.id },
+
+        const existingLocation = await prisma.location.findFirst({
+          where: { userId: user.id, name: geocoded.name }
         });
-        if (!location) {
-          await ctx.reply('Ошибка: локация с таким ID не найдена.');
-          return;
+
+        if (existingLocation) {
+          if (
+            existingLocation.latitude !== geocoded.latitude ||
+            existingLocation.longitude !== geocoded.longitude
+          ) {
+            locationRecord = await prisma.location.update({
+              where: { id: existingLocation.id },
+              data: {
+                latitude: geocoded.latitude,
+                longitude: geocoded.longitude
+              }
+            });
+          } else {
+            locationRecord = existingLocation;
+          }
+        } else {
+          locationRecord = await prisma.location.create({
+            data: {
+              name: geocoded.name,
+              latitude: geocoded.latitude,
+              longitude: geocoded.longitude,
+              userId: user.id
+            }
+          });
         }
-        locationId = parsedLocationId;
+      } else {
+        locationRecord = await prisma.location.findFirst({
+          where: { userId: user.id },
+          orderBy: { id: 'desc' }
+        });
+      }
+
+      if (!locationRecord) {
+        locationRecord = await prisma.location.create({
+          data: {
+            name: DEFAULT_CITY.name,
+            latitude: DEFAULT_CITY.latitude,
+            longitude: DEFAULT_CITY.longitude,
+            userId: user.id
+          }
+        });
       }
 
       // Create notification
@@ -57,27 +100,33 @@ export function registerAddCommand(bot: Bot<Context>) {
         data: {
           type,
           time: time || null,
-          days: days || null,
           enabled: true,
           userId: user.id,
-          locationId: locationId || null,
+          locationId: locationRecord?.id ?? null,
+          days: days ?? null,
         },
         include: {
           location: true,
         },
       });
 
-      const locationInfo = notification.location
-        ? ` (${notification.location.name})`
-        : '';
-      const timeInfo = notification.time ? ` в ${notification.time}` : '';
-      const daysInfo = notification.days ? ` (дни: ${notification.days})` : '';
+      const parts = [
+        '✅ Уведомление добавлено!',
+        '',
+        `Тип: ${notification.type}`,
+      ];
+      if (notification.time) {
+        parts.push(`Время: ${notification.time}`);
+      }
+      if (notification.days) {
+        parts.push(`Дни: ${notification.days}`);
+      }
+      if (notification.location) {
+        parts.push(`Локация: ${notification.location.name}`);
+      }
+      parts.push(`Статус: ${notification.enabled ? 'включено' : 'выключено'}`);
 
-      await ctx.reply(
-        `✅ Уведомление добавлено!\n\n` +
-          `Тип: ${notification.type}${locationInfo}${timeInfo}${daysInfo}\n` +
-          `Статус: ${notification.enabled ? 'включено' : 'выключено'}`
-      );
+      await ctx.reply(parts.join('\n'));
 
       logger('Notification created:', { id: notification.id, userId: user.id, type });
     } catch (error) {
