@@ -2,7 +2,7 @@ import type { Coordinates } from '../weather/provider';
 
 export type GeocodedLocation = Coordinates & { name: string; aliases: string[] };
 
-const CITY_COORDINATES: GeocodedLocation[] = [
+export const CITY_COORDINATES: GeocodedLocation[] = [
   {
     name: 'Москва',
     aliases: ['москва', 'moscow', 'moskva'],
@@ -67,6 +67,10 @@ export function getLocationCacheSnapshot() {
     size: locationCache.size,
     keys: Array.from(locationCache.keys())
   };
+}
+
+export function getQuickPickCities(limit = 6): GeocodedLocation[] {
+  return CITY_COORDINATES.slice(0, limit);
 }
 
 export const DEFAULT_CITY = CITY_COORDINATES[0];
