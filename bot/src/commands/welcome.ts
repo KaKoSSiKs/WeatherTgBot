@@ -26,7 +26,18 @@ export function registerWelcomeCommand(bot: Bot<Context>, weatherProvider: Weath
 
   bot.callbackQuery(/^menu:/, async (ctx) => {
     const data = ctx.callbackQuery.data ?? '';
-    await ctx.answerCallbackQuery();
+    
+    // ✅ ДОБАВИТЬ ОБРАБОТКУ ОШИБОК ДЛЯ answerCallbackQuery
+    try {
+      await ctx.answerCallbackQuery();
+    } catch (error) {
+      // Игнорируем ошибки "протухших" callback'ов
+      if (error.description?.includes('query is too old')) {
+        return;
+      }
+      // Пробрасываем другие ошибки
+      throw error;
+    }
 
     switch (data) {
       case 'menu:get_weather': {
@@ -60,4 +71,3 @@ export function registerWelcomeCommand(bot: Bot<Context>, weatherProvider: Weath
     }
   });
 }
-

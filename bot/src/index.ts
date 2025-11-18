@@ -13,13 +13,30 @@ import { registerSetupDialog } from './dialogs/setup';
 async function main() {
   logger('Bot starting...');
   logger('Bot Token:', appConfig.BOT_TOKEN);
+  
   const bot = createBot();
   const weatherProvider = getWeatherProvider();
+  
+  // ✅ ДОБАВИТЬ ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ОШИБОК
+  bot.catch((err) => {
+    const ctx = err.ctx;
+    logger(`Error while handling update ${ctx.update.update_id}:`, err.error);
+    
+    // Игнорируем ошибки "протухших" callback'ов
+    if (err.error.description?.includes('query is too old')) {
+      return;
+    }
+    
+    // Для других ошибок можно отправить сообщение пользователю
+    ctx.reply('Произошла непредвиденная ошибка. Попробуйте еще раз.').catch(() => {});
+  });
+  
   registerWelcomeCommand(bot, weatherProvider);
   registerAddCommand(bot);
   registerListCommand(bot);
   registerWeatherCommand(bot, weatherProvider);
   registerSetupDialog(bot);
+  
   await bot.api.getMe();
   logger('Bot is ready and running');
   bot.start();
