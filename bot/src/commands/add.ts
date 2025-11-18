@@ -4,8 +4,15 @@ import { prisma } from '../db/prisma';
 import { getOrCreateUser } from '../db/user';
 import { logger } from '../utils/logger';
 import { DEFAULT_CITY, geocodeCity } from '../utils/geocoding';
-import { addMenuKeyboard, mainMenuKeyboard } from '../keyboards';
+import { addMenuKeyboard, mainMenuKeyboard, confirmationKeyboard } from '../keyboards';
 import { startAddFlow } from '../dialogs/setup';
+import {
+  parseNotificationCommand,
+  formatParsedNotification,
+  getUserPreferences,
+  type ParsedNotification
+} from '../utils/nlpParser';
+import { setFlowState, getFlowState, clearFlowState } from '../state/session';
 
 const INTERACTIVE_HINT =
   '\n\nИспользуйте /add без параметров для интерактивной настройки с подсказками.';
@@ -18,7 +25,42 @@ async function handleTextAddCommand(ctx: Context) {
   }
 
   const user = await getOrCreateUser(telegramId, ctx.from?.language_code);
+  const fullText = ctx.message?.text || '';
 
+  // Try NLP parsing first
+  try {
+    const parsed = await parseNotificationCommand(fullText, user.id);
+    
+    // If we got a reasonable parse, show confirmation
+    if (parsed.confidence !== 'low' || fullText.split(/\s+/).length > 2) {
+      // Store parsed data in session for confirmation
+      setFlowState(user.id, {
+        flow: 'nlp_confirm',
+        step: 'confirm',
+        data: parsed,
+        updatedAt: Date.now(),
+        expiresAt: Date.now() + 300000 // 5 minutes
+      });
+
+      const preferences = await getUserPreferences(user.id);
+      let suggestion = '';
+      if (preferences.preferredTime && !parsed.time) {
+        suggestion = `\n\n💡 Как обычно, в ${preferences.preferredTime} для ${preferences.preferredLocation?.name || 'вашей локации'}?`;
+      }
+
+      const confirmationText =
+        `Я понял как:\n\n${formatParsedNotification(parsed)}${suggestion}\n\nВсё верно?`;
+
+      await ctx.reply(confirmationText, {
+        reply_markup: confirmationKeyboard(confirmationText)
+      });
+      return;
+    }
+  } catch (error) {
+    logger('NLP parsing error, falling back to structured parsing:', error);
+  }
+
+  // Fallback to structured parsing
   const args = ctx.message?.text?.trim().split(/\s+/).slice(1) || [];
   const type = args[0];
   const time = args[1];
@@ -38,7 +80,9 @@ async function handleTextAddCommand(ctx: Context) {
       'Использование: /add <тип> <время> [дни] [местоположение]\n\n' +
         'Примеры:\n' +
         '• /add daily 09:00 Москва\n' +
-        '• /add daily 09:00 1,3,5 Москва' +
+        '• /add daily 09:00 1,3,5 Москва\n' +
+        '• /add каждый день утром Москва\n' +
+        '• /add напоминай вечером в пятницу' +
         INTERACTIVE_HINT
     );
     return;
@@ -136,6 +180,93 @@ async function handleTextAddCommand(ctx: Context) {
   logger('Notification created:', { id: notification.id, userId: user.id, type });
 }
 
+async function createNotificationFromParsed(
+  ctx: Context,
+  userId: number,
+  parsed: ParsedNotification
+) {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) {
+    await ctx.reply('Ошибка: пользователь не найден.');
+    return;
+  }
+
+  let locationRecord: Location | null = null;
+  if (parsed.location) {
+    const existingLocation = await prisma.location.findFirst({
+      where: { userId: user.id, name: parsed.location.name }
+    });
+
+    if (existingLocation) {
+      locationRecord = existingLocation;
+    } else {
+      locationRecord = await prisma.location.create({
+        data: {
+          name: parsed.location.name,
+          latitude: parsed.location.latitude,
+          longitude: parsed.location.longitude,
+          userId: user.id
+        }
+      });
+    }
+  } else {
+    locationRecord = await prisma.location.findFirst({
+      where: { userId: user.id },
+      orderBy: { id: 'desc' }
+    });
+
+    if (!locationRecord) {
+      locationRecord = await prisma.location.create({
+        data: {
+          name: DEFAULT_CITY.name,
+          latitude: DEFAULT_CITY.latitude,
+          longitude: DEFAULT_CITY.longitude,
+          userId: user.id
+        }
+      });
+    }
+  }
+
+  const notification = await prisma.notification.create({
+    data: {
+      type: parsed.type,
+      time: parsed.time,
+      days: parsed.days,
+      enabled: true,
+      userId: user.id,
+      locationId: locationRecord?.id ?? null
+    },
+    include: {
+      location: true
+    }
+  });
+
+  const parts = [
+    '✅ Уведомление добавлено!',
+    '',
+    `Тип: ${notification.type}`
+  ];
+  if (notification.time) {
+    parts.push(`Время: ${notification.time}`);
+  }
+  if (notification.days) {
+    parts.push(`Дни: ${notification.days}`);
+  }
+  if (notification.location) {
+    parts.push(`Локация: ${notification.location.name}`);
+  }
+  parts.push(`Статус: ${notification.enabled ? 'включено' : 'выключено'}`);
+
+  await ctx.reply(parts.join('\n'));
+
+  logger('Notification created via NLP:', {
+    id: notification.id,
+    userId: user.id,
+    type: notification.type,
+    confidence: parsed.confidence
+  });
+}
+
 async function showInteractiveMenu(ctx: Context) {
   await ctx.reply(
     'Создайте уведомление в интерактивном режиме. Выберите частоту, время или город, либо начните сразу:',
@@ -181,6 +312,49 @@ export function registerAddCommand(bot: Bot<Context>) {
     } catch (error) {
       logger('Error in /add command:', error);
       await ctx.reply('Произошла ошибка при добавлении уведомления.');
+    }
+  });
+
+  // Handle NLP confirmation callbacks
+  bot.callbackQuery(/^nlp:/, async (ctx) => {
+    const userId = ctx.from?.id;
+    if (!userId) return;
+    const data = ctx.callbackQuery.data ?? '';
+    await ctx.answerCallbackQuery();
+    const action = data.split(':')[1];
+
+    const state = getFlowState(userId);
+    if (!state || state.flow !== 'nlp_confirm') {
+      await ctx.reply('Сессия истекла. Попробуйте снова.');
+      return;
+    }
+
+    const parsed = state.data as ParsedNotification;
+
+    switch (action) {
+      case 'confirm': {
+        await createNotificationFromParsed(ctx, userId, parsed);
+        clearFlowState(userId);
+        break;
+      }
+      case 'edit': {
+        await ctx.reply('Открываю мастер для редактирования...');
+        await startAddFlow(ctx, {
+          notificationType: parsed.type,
+          time: parsed.time ?? undefined,
+          days: parsed.days ?? undefined,
+          locationName: parsed.locationName ?? undefined,
+          latitude: parsed.location?.latitude,
+          longitude: parsed.location?.longitude
+        });
+        clearFlowState(userId);
+        break;
+      }
+      case 'cancel': {
+        clearFlowState(userId);
+        await ctx.reply('Создание уведомления отменено.');
+        break;
+      }
     }
   });
 

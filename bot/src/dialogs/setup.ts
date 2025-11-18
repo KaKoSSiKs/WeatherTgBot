@@ -23,6 +23,7 @@ export type SetupData = {
   longitude?: number;
   notificationType?: string;
   time?: string | null;
+  days?: string | null;
 };
 
 function ensureUser(ctx: Context): number | null {

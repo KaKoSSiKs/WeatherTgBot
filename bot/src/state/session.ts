@@ -1,4 +1,4 @@
-export type FlowType = 'setup' | 'add';
+export type FlowType = 'setup' | 'add' | 'nlp_confirm';
 
 export type SetupStep =
   | 'location'
