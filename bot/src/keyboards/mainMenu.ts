@@ -1,11 +1,40 @@
 import { InlineKeyboard } from 'grammy';
+import { MenuCallback, ForecastCallback } from './callback_data';
 
+/**
+ * Создает главное меню с InlineKeyboard
+ * Формат согласно новому дизайну UX/UI:
+ * - Строка 1: Текущая погода, Прогноз на день
+ * - Строка 2: На 3 дня, На 7 дней, На 10 дней
+ * - Строка 3: Настройки, Помощь
+ */
 export function mainMenuKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
-    .text('🌤️ Получить погоду', 'menu:get_weather')
+    // Строка 1: Текущая погода и прогноз на день
+    .text('🌤️ Текущая погода', MenuCallback.create('current_weather'))
+    .text('📅 Прогноз на день', ForecastCallback.create('day', undefined, undefined, 'main_menu'))
     .row()
-    .text('⚙️ Настроить уведомления', 'menu:setup_notifications')
+    // Строка 2: Прогнозы на несколько дней
+    .text('📅 На 3 дня', ForecastCallback.create('3day', undefined, undefined, 'main_menu'))
+    .text('📅 На 7 дней', ForecastCallback.create('7day', undefined, undefined, 'main_menu'))
+    .text('📅 На 10 дней', ForecastCallback.create('10day', undefined, undefined, 'main_menu'))
     .row()
-    .text('📍 Указать локацию', 'menu:set_location');
+    // Строка 3: Настройки и помощь
+    .text('⚙️ Настройки', MenuCallback.create('settings'))
+    .text('❓ Помощь', MenuCallback.create('help'));
 }
+
+/**
+ * Текст приветствия для главного меню
+ */
+export const MAIN_MENU_TEXT = `👋 Привет! Я ваш персональный погодный помощник!
+
+Я могу:
+• Показать текущую погоду 🌤️
+• Дать прогноз на день 📅
+• Показать прогноз на 3, 7, 10 дней с детализацией
+• Настроить автоматические уведомления
+• Давать рекомендации по одежде
+
+Выберите действие:`;
 
