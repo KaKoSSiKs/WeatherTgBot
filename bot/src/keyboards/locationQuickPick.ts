@@ -1,4 +1,4 @@
-import { InlineKeyboard, Keyboard } from 'grammy';
+import { InlineKeyboard } from 'grammy';
 import { getQuickPickCities } from '../utils/geocoding';
 
 export function locationQuickPickKeyboard(): InlineKeyboard {
@@ -14,10 +14,12 @@ export function locationQuickPickKeyboard(): InlineKeyboard {
   return keyboard;
 }
 
-export function locationShareKeyboard(): Keyboard {
-  return new Keyboard()
-    .requestLocation('📍 Отправить геопозицию')
-    .text('❌ Отмена')
-    .resized();
+/**
+ * Заменено на InlineKeyboard согласно требованиям отказа от ReplyKeyboard.
+ * Пользователь может отправить геолокацию через обычное сообщение.
+ */
+export function locationShareKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text('❌ Отмена', 'setup:cancel');
 }
 
