@@ -341,12 +341,67 @@ export function registerSetupDialog(bot: Bot<Context>) {
 
     switch (action) {
       case 'city': {
+        const state = getFlowState(userId);
+        // Если мы в режиме добавления города (без уведомления)
+        if (state?.flow === 'add_city') {
+          const location = geocodeCity(payload);
+          if (!location) {
+            await ctx.reply('Не удалось определить город. Попробуйте снова.');
+            return;
+          }
+          
+          try {
+            const telegramId = userId.toString();
+            const user = await getOrCreateUser(telegramId, ctx.from?.language_code);
+
+            // Проверяем, есть ли уже такой город
+            const existingLocation = await prisma.location.findFirst({
+              where: {
+                userId: user.id,
+                name: location.name
+              }
+            });
+
+            if (existingLocation) {
+              await ctx.reply(`Город "${location.name}" уже добавлен.`, {
+                reply_markup: { remove_keyboard: true }
+              });
+              clearFlowState(userId);
+              return;
+            }
+
+            // Создаем новую локацию
+            const newLocation = await prisma.location.create({
+              data: {
+                name: location.name,
+                latitude: location.latitude,
+                longitude: location.longitude,
+                userId: user.id
+              }
+            });
+
+            clearFlowState(userId);
+            await ctx.reply(
+              `✅ Город "${newLocation.name}" успешно добавлен!\n\nТеперь вы можете выбрать его для просмотра погоды.`,
+              { reply_markup: { remove_keyboard: true } }
+            );
+
+            logger(`User ${userId} added location: ${newLocation.name}`);
+          } catch (error) {
+            logger('Error adding city:', error);
+            await ctx.reply('Произошла ошибка при добавлении города. Попробуйте еще раз.');
+            clearFlowState(userId);
+          }
+          return;
+        }
+        
+        // Обычная обработка для настройки уведомлений
         const location = geocodeCity(payload);
         if (!location) {
           await ctx.reply('Не удалось определить город. Попробуйте снова.');
           return;
         }
-        await handleGeocodedLocation(ctx, userId, getFlowState(userId)?.flow ?? 'setup', location);
+        await handleGeocodedLocation(ctx, userId, state?.flow ?? 'setup', location);
         break;
       }
       case 'type': {
@@ -373,6 +428,15 @@ export function registerSetupDialog(bot: Bot<Context>) {
         break;
       }
       case 'cancel': {
+        const state = getFlowState(userId);
+        // Если мы в режиме добавления города
+        if (state?.flow === 'add_city') {
+          clearFlowState(userId);
+          await ctx.reply('Добавление города отменено.', {
+            reply_markup: { remove_keyboard: true }
+          });
+          return;
+        }
         await cancelFlow(ctx);
         break;
       }
@@ -388,6 +452,11 @@ export function registerSetupDialog(bot: Bot<Context>) {
       return;
     }
     const state = getFlowState(userId);
+    // Пропускаем, если это режим добавления города (обрабатывается в settings.ts)
+    if (state?.flow === 'add_city') {
+      await next();
+      return;
+    }
     if (!state || state.step !== 'location') {
       await next();
       return;
@@ -407,6 +476,11 @@ export function registerSetupDialog(bot: Bot<Context>) {
       return;
     }
     const state = getFlowState(userId);
+    // Пропускаем, если это режим добавления города (обрабатывается в settings.ts)
+    if (state?.flow === 'add_city') {
+      await next();
+      return;
+    }
     if (!state || state.step !== 'location') {
       await next();
       return;

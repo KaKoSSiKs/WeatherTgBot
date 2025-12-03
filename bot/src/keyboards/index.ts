@@ -12,4 +12,10 @@ export {
   getNoCitiesKeyboard,
   getErrorKeyboard
 } from './currentWeather';
+export {
+  getForecastNavigationKeyboard,
+  getDetailedForecastKeyboard,
+  getDailyForecastItemKeyboard,
+  getHourlyForecastKeyboard
+} from './forecast';
 
