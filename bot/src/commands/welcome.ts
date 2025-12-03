@@ -109,8 +109,8 @@ export function registerWelcomeCommand(bot: Bot<Context>, weatherProvider: Weath
     pushNavigationState(userId, 'main_menu', {}, message.message_id);
   });
 
-  // Обработчик callback'ов главного меню
-  bot.callbackQuery(/^menu:/, async (ctx) => {
+  // Обработчик callback'ов главного меню (кроме current_weather, который обрабатывается в handlers/currentWeather.ts)
+  bot.callbackQuery(/^menu:(?!current_weather)/, async (ctx) => {
     const data = ctx.callbackQuery.data ?? '';
     const userId = ctx.from?.id;
     
@@ -135,32 +135,6 @@ export function registerWelcomeCommand(bot: Bot<Context>, weatherProvider: Weath
     }
 
     switch (parsed.action) {
-      case 'current_weather': {
-        try {
-          const weather = await weatherProvider.getCurrentByCoords({
-            latitude: DEFAULT_CITY.latitude,
-            longitude: DEFAULT_CITY.longitude
-          });
-          const keyboard = new InlineKeyboard();
-          addNavigationButtons(keyboard, userId);
-          
-          const message = await ctx.reply(
-            formatWelcomeWeather(
-              DEFAULT_CITY.name,
-              weather.temperature,
-              weather.feelsLike,
-              weather.conditions,
-              weather.notice
-            ),
-            { reply_markup: keyboard }
-          );
-          pushNavigationState(userId, 'current_weather', { city: DEFAULT_CITY.name }, message.message_id);
-        } catch (error) {
-          logger('Welcome weather error:', error);
-          await ctx.reply('Не удалось получить погоду. Попробуйте команду /weather позже.');
-        }
-        break;
-      }
       case 'settings': {
         const settingsKeyboard = new InlineKeyboard();
         addNavigationButtons(settingsKeyboard, userId);

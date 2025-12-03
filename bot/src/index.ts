@@ -9,6 +9,7 @@ import { appConfig } from './config';
 import { logger } from './utils/logger';
 import { getWeatherProvider } from './weather/provider';
 import { registerSetupDialog } from './dialogs/setup';
+import { registerCurrentWeatherHandlers } from './handlers/currentWeather';
 
 async function main() {
   logger('Bot starting...');
@@ -31,6 +32,8 @@ async function main() {
     ctx.reply('Произошла непредвиденная ошибка. Попробуйте еще раз.').catch(() => {});
   });
   
+  // Регистрируем обработчики текущей погоды ПЕРЕД welcome, чтобы они перехватывали callback'и
+  registerCurrentWeatherHandlers(bot);
   registerWelcomeCommand(bot, weatherProvider);
   registerAddCommand(bot);
   registerListCommand(bot);

@@ -6,4 +6,10 @@ export { addMenuKeyboard } from './addMenu';
 export { confirmationKeyboard } from './confirmation';
 export * from './callback_data';
 export { createNavigationButtons, addNavigationButtons } from './navigation';
+export {
+  getCurrentWeatherKeyboard,
+  getCitySelectionKeyboard,
+  getNoCitiesKeyboard,
+  getErrorKeyboard
+} from './currentWeather';
 
