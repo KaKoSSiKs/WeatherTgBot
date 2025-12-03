@@ -4,7 +4,7 @@
 
 import { InlineKeyboard } from 'grammy';
 import { NavCallback } from './callback_data';
-import { canGoBack, getCurrentNavigationState } from '../utils/navigation';
+import { canGoBack } from '../utils/navigation';
 
 /**
  * Создает строку с навигационными кнопками (Назад и Главное меню)
@@ -12,15 +12,9 @@ import { canGoBack, getCurrentNavigationState } from '../utils/navigation';
 export function createNavigationButtons(userId: number): InlineKeyboard {
   const keyboard = new InlineKeyboard();
   const hasBack = canGoBack(userId);
-  const currentState = getCurrentNavigationState(userId);
-  
-  // Кодируем текущее состояние для кнопки "Назад"
-  const previousState = currentState 
-    ? JSON.stringify({ screen: currentState.screen, data: currentState.data })
-    : undefined;
 
   if (hasBack) {
-    keyboard.text('⬅️ Назад', NavCallback.create('back', previousState));
+    keyboard.text('⬅️ Назад', NavCallback.create('back'));
   }
   
   keyboard.text('🏠 Главное меню', NavCallback.create('main_menu'));
@@ -33,18 +27,12 @@ export function createNavigationButtons(userId: number): InlineKeyboard {
  */
 export function addNavigationButtons(keyboard: InlineKeyboard, userId: number): InlineKeyboard {
   const hasBack = canGoBack(userId);
-  const currentState = getCurrentNavigationState(userId);
-  
-  // Кодируем текущее состояние для кнопки "Назад"
-  const previousState = currentState 
-    ? JSON.stringify({ screen: currentState.screen, data: currentState.data })
-    : undefined;
 
   // Добавляем навигационные кнопки в новую строку
   keyboard.row();
   
   if (hasBack) {
-    keyboard.text('⬅️ Назад', NavCallback.create('back', previousState));
+    keyboard.text('⬅️ Назад', NavCallback.create('back'));
   }
   
   keyboard.text('🏠 Главное меню', NavCallback.create('main_menu'));
