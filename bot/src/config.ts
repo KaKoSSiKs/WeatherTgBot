@@ -1,8 +1,9 @@
 ﻿import { config as loadEnv } from 'dotenv';  
 import { z } from 'zod';  
 
-// Загружаем .env из корневой директории
-loadEnv({ path: '../.env' });  
+// Загружаем .env из корневой директории и из текущей директории
+loadEnv({ path: '../.env' });
+loadEnv({ path: '.env' });  
 
 const schema = z.object({  
   BOT_TOKEN: z.string().min(1, 'BOT_TOKEN is required'),

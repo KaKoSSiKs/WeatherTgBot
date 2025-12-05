@@ -240,3 +240,227 @@ export function formatWeatherError(cityName: string, errorType: string = 'api_er
   }
 }
 
+/**
+ * Типы данных для прогнозов
+ */
+import type { DailyForecastData, HourlyForecastData } from './weatherService';
+
+/**
+ * Отформатировать ежедневный прогноз (краткий формат)
+ */
+export function formatDailyForecast(
+  forecastData: DailyForecastData,
+  cityName: string,
+  countryCode: string = 'RU',
+  includeRecommendations: boolean = true,
+  includeWarnings: boolean = true
+): string {
+  try {
+    const dateStr = forecastData.dateStr || '';
+    const condition = forecastData.condition || 'Неизвестно';
+    const conditionEmoji = getWeatherEmoji(condition);
+    
+    const temp = forecastData.temp || 0;
+    const tempMin = forecastData.tempMin || temp;
+    const tempMax = forecastData.tempMax || temp;
+    
+    const humidity = forecastData.humidity || 0;
+    const windSpeed = forecastData.windSpeed || 0;
+    const windDeg = forecastData.windDeg || 0;
+    const windDirection = getWindDirection(windDeg);
+    
+    const feelsLike = forecastData.feelsLike || temp;
+    
+    let message = `🌍 ${cityName}, ${countryCode} | Прогноз на ${dateStr}\n\n`;
+    message += `${conditionEmoji} ${condition}\n`;
+    message += `🌡 Температура: ${temp.toFixed(1)}°C\n`;
+    message += `🤚 Ощущается как: ${feelsLike.toFixed(1)}°C\n`;
+    message += `💧 Влажность: ${humidity}%\n`;
+    message += `💨 Ветер: ${windSpeed.toFixed(1)} м/с, ${windDirection}`;
+    
+    // Добавляем рекомендации, если нужно
+    if (includeRecommendations) {
+      const recommendation = getTemperatureRecommendation(temp, temp);
+      message += `\n\n💡 Рекомендации:\n${recommendation}`;
+    }
+    
+    // Добавляем предупреждения, если есть
+    const warning = forecastData.warning || '';
+    if (includeWarnings && warning) {
+      message += `\n\n⚠️ ${warning}`;
+    }
+    
+    return message;
+  } catch (error) {
+    return `Ошибка форматирования прогноза на ${forecastData.dateStr || 'дату'}`;
+  }
+}
+
+/**
+ * Отформатировать детальный прогноз на день
+ */
+export function formatDetailedForecast(
+  forecastData: DailyForecastData,
+  cityName: string,
+  countryCode: string = 'RU',
+  timezone: string = 'Europe/Moscow',
+  includeRecommendations: boolean = true,
+  includeWarnings: boolean = true
+): string {
+  try {
+    const dateStr = forecastData.dateStr || '';
+    const condition = forecastData.condition || 'Неизвестно';
+    const conditionEmoji = getWeatherEmoji(condition);
+    
+    const temp = forecastData.temp || 0;
+    const tempMin = forecastData.tempMin || temp;
+    const tempMax = forecastData.tempMax || temp;
+    const feelsLike = forecastData.feelsLike || temp;
+    
+    const humidity = forecastData.humidity || 0;
+    const pressure = forecastData.pressure || 1013;
+    const visibility = (forecastData.visibility || 10000) / 1000; // в км
+    
+    const windSpeed = forecastData.windSpeed || 0;
+    const windDeg = forecastData.windDeg || 0;
+    const windDirection = getWindDirection(windDeg);
+    
+    // Время восхода и заката
+    let sunriseTime = 'Неизвестно';
+    let sunsetTime = 'Неизвестно';
+    
+    if (forecastData.sunrise) {
+      const sunrise = DateTime.fromSeconds(forecastData.sunrise).setZone(timezone);
+      sunriseTime = sunrise.toFormat('HH:mm');
+    }
+    if (forecastData.sunset) {
+      const sunset = DateTime.fromSeconds(forecastData.sunset).setZone(timezone);
+      sunsetTime = sunset.toFormat('HH:mm');
+    }
+    
+    // Почасовой прогноз (утро, день, вечер, ночь)
+    const hourlyData = forecastData.detailedHours || [];
+    const timePeriods: Array<{ name: string; start: number; end: number; emoji: string }> = [
+      { name: 'Утро', start: 6, end: 12, emoji: '☀️' },
+      { name: 'День', start: 12, end: 18, emoji: '🌤️' },
+      { name: 'Вечер', start: 18, end: 24, emoji: '🌆' },
+      { name: 'Ночь', start: 0, end: 6, emoji: '🌙' }
+    ];
+    
+    const periodForecasts: string[] = [];
+    for (const period of timePeriods) {
+      const periodHours = hourlyData.filter(h => {
+        const hour = h.hour;
+        if (period.start < period.end) {
+          return hour >= period.start && hour < period.end;
+        } else {
+          // Для ночи (0-6)
+          return hour >= period.start || hour < period.end;
+        }
+      });
+      
+      if (periodHours.length > 0) {
+        const avgTemp = periodHours.reduce((sum, h) => sum + h.temp, 0) / periodHours.length;
+        const avgWind = periodHours.reduce((sum, h) => sum + h.windSpeed, 0) / periodHours.length;
+        const periodCondition = periodHours[0]?.condition || 'Неизвестно';
+        const periodEmoji = getWeatherEmoji(periodCondition);
+        
+        periodForecasts.push(
+          `${periodEmoji} ${period.name} (${period.start.toString().padStart(2, '0')}:00-${period.end.toString().padStart(2, '0')}:00): ` +
+          `${avgTemp.toFixed(1)}°C, ветер ${avgWind.toFixed(1)} м/с`
+        );
+      }
+    }
+    
+    const periodText = periodForecasts.length > 0 
+      ? periodForecasts.join('\n')
+      : 'Нет данных по периодам';
+    
+    // Формируем сообщение
+    let message = `🌍 ${cityName}, ${countryCode} | Прогноз на ${dateStr}\n\n`;
+    message += `${conditionEmoji} ${condition}\n\n`;
+    message += `🌡 Температура: ${temp.toFixed(1)}°C\n`;
+    message += `🤚 Ощущается как: ${feelsLike.toFixed(1)}°C\n`;
+    message += `💧 Влажность: ${humidity}%\n`;
+    message += `📊 Давление: ${pressure} гПа\n`;
+    message += `👁 Видимость: ${visibility.toFixed(1)} км\n`;
+    message += `💨 Ветер: ${windSpeed.toFixed(1)} м/с, ${windDirection}\n\n`;
+    message += `${periodText}\n\n`;
+    message += `🌅 Восход: ${sunriseTime}\n`;
+    message += `🌇 Закат: ${sunsetTime}`;
+    
+    // Добавляем рекомендации
+    if (includeRecommendations) {
+      const recommendation = getTemperatureRecommendation(temp, feelsLike);
+      message += `\n\n💡 Рекомендации:\n${recommendation}`;
+    }
+    
+    // Добавляем предупреждения
+    const warning = forecastData.warning || '';
+    if (includeWarnings) {
+      if (warning) {
+        message += `\n\n⚠️ Предупреждение МЧС: ${warning}`;
+      } else {
+        message += '\n\n⚠️ Предупреждений нет';
+      }
+    }
+    
+    return message;
+  } catch (error) {
+    return `🌍 ${cityName}, ${countryCode} | Прогноз на ${forecastData.dateStr || 'дату'}\n\n⚠️ Не удалось получить детальные данные о прогнозе.\n\nПожалуйста, попробуйте обновить данные через несколько минут.`;
+  }
+}
+
+/**
+ * Отформатировать почасовой прогноз
+ */
+export function formatHourlyForecast(
+  hourlyData: HourlyForecastData[],
+  cityName: string,
+  dateStr: string
+): string {
+  try {
+    if (!hourlyData || hourlyData.length === 0) {
+      return `⏱️ Нет данных почасового прогноза для ${cityName} на ${dateStr}`;
+    }
+    
+    let message = `⏱️ Почасовой прогноз для ${cityName} на ${dateStr}\n\n`;
+    
+    // Группируем по 6 часов для лучшей читаемости, если данных много
+    if (hourlyData.length > 12) {
+      for (let i = 0; i < hourlyData.length; i += 6) {
+        const chunk = hourlyData.slice(i, i + 6);
+        for (const hourData of chunk) {
+          const timeStr = hourData.time || '00:00';
+          const temp = hourData.temp || 0;
+          const condition = hourData.condition || 'Неизвестно';
+          const emoji = getWeatherEmoji(condition);
+          const windSpeed = hourData.windSpeed || 0;
+          
+          message += `${timeStr} ${emoji} ${temp.toFixed(1)}°C, 💨 ${windSpeed.toFixed(1)} м/с\n`;
+        }
+        
+        // Добавляем пустую строку между группами
+        if (i + 6 < hourlyData.length) {
+          message += '\n';
+        }
+      }
+    } else {
+      // Если данных мало, показываем все
+      for (const hourData of hourlyData) {
+        const timeStr = hourData.time || '00:00';
+        const temp = hourData.temp || 0;
+        const condition = hourData.condition || 'Неизвестно';
+        const emoji = getWeatherEmoji(condition);
+        const windSpeed = hourData.windSpeed || 0;
+        
+        message += `${timeStr} ${emoji} ${temp.toFixed(1)}°C, 💨 ${windSpeed.toFixed(1)} м/с\n`;
+      }
+    }
+    
+    return message.trim();
+  } catch (error) {
+    return 'Ошибка форматирования почасового прогноза';
+  }
+}
+

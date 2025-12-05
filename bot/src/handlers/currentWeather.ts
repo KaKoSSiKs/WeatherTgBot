@@ -120,7 +120,7 @@ async function showCurrentWeather(
     }
 
     // Сохраняем состояние в историю навигации
-    if (sentMessage && 'message_id' in sentMessage) {
+    if (sentMessage && typeof sentMessage === 'object' && 'message_id' in sentMessage) {
       pushNavigationState(
         userId,
         'current_weather',
@@ -167,7 +167,7 @@ async function handleNoCities(ctx: Context, userId: number): Promise<void> {
     }
 
     // Сохраняем состояние
-    if (sentMessage && 'message_id' in sentMessage) {
+    if (sentMessage && typeof sentMessage === 'object' && 'message_id' in sentMessage) {
       pushNavigationState(
         userId,
         'no_cities',
@@ -217,7 +217,7 @@ async function handleWeatherError(
     }
 
     // Сохраняем состояние
-    if (sentMessage && 'message_id' in sentMessage) {
+    if (sentMessage && typeof sentMessage === 'object' && 'message_id' in sentMessage) {
       pushNavigationState(
         userId,
         'weather_error',
@@ -282,7 +282,7 @@ async function showCitySelection(
     }
 
     // Сохраняем состояние
-    if (sentMessage && 'message_id' in sentMessage) {
+    if (sentMessage && typeof sentMessage === 'object' && 'message_id' in sentMessage) {
       pushNavigationState(
         userId,
         'city_selection',
@@ -381,7 +381,7 @@ async function handleRefreshWeather(
     });
 
     // Сохраняем новое состояние
-    if (sentMessage && 'message_id' in sentMessage) {
+    if (sentMessage && typeof sentMessage === 'object' && 'message_id' in sentMessage) {
       pushNavigationState(
         userId,
         'current_weather',
