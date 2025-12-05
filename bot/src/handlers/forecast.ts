@@ -21,7 +21,10 @@ import {
 } from '../services/weatherFormatter';
 import {
   getDailyForecast,
-  getHourlyForecast
+  getHourlyForecast,
+  getDetailedDailyForecast,
+  getInterpolatedHourlyForecast,
+  refreshDetailedForecast
 } from '../services/weatherService';
 import { getErrorKeyboard } from '../keyboards/currentWeather';
 import { DateTime } from 'luxon';
@@ -257,20 +260,21 @@ async function showDetailedForecast(
     const telegramId = userId.toString();
     const user = await getOrCreateUser(telegramId, ctx.from?.language_code);
 
-    // Получаем прогноз на несколько дней, чтобы найти нужную дату
-    const forecastResult = await getDailyForecast(
+    // Получаем улучшенный детальный прогноз
+    const detailedForecastResult = await getDetailedDailyForecast(
       {
         latitude: location.latitude,
         longitude: location.longitude
       },
       location.name,
-      10, // Берем максимум, чтобы найти нужный день
+      dateStr,
       locationId,
       'RU', // TODO: получать из БД
-      'Europe/Moscow' // TODO: получать из БД
+      'Europe/Moscow', // TODO: получать из БД
+      true // useCache
     );
 
-    if (!forecastResult.data || forecastResult.data.length === 0) {
+    if (!detailedForecastResult.data) {
       await handleForecastError(
         ctx,
         userId,
@@ -281,32 +285,20 @@ async function showDetailedForecast(
       return;
     }
 
-    // Ищем нужную дату
-    const targetDate = DateTime.fromISO(dateStr).startOf('day');
-    const dayForecast = forecastResult.data.find(forecast => {
-      const forecastDate = DateTime.fromJSDate(forecast.date).startOf('day');
-      return forecastDate.equals(targetDate);
-    });
-
-    if (!dayForecast) {
-      await ctx.editMessageText(
-        `Прогноз на ${targetDate.toFormat('dd.MM.yyyy')} не найден.`,
-        {
-          reply_markup: getErrorKeyboard(userId)
-        }
-      );
-      return;
-    }
-
-    // Форматируем детальный прогноз
-    const message = formatDetailedForecast(
-      dayForecast,
+    // Форматируем улучшенный детальный прогноз
+    let message = formatDetailedForecast(
+      detailedForecastResult.data,
       location.name,
       'RU', // TODO: получать из БД
       'Europe/Moscow', // TODO: получать из БД
       true, // includeRecommendations
       true // includeWarnings
     );
+
+    // Добавляем информацию об источнике данных, если не из кэша
+    if (detailedForecastResult.source !== 'cache') {
+      message += `\n\n📡 Данные обновлены: ${detailedForecastResult.source}`;
+    }
 
     // Создаем клавиатуру
     const keyboard = getDetailedForecastKeyboard(
@@ -378,8 +370,8 @@ async function showHourlyForecast(
       return;
     }
 
-    // Получаем почасовой прогноз
-    const hourlyResult = await getHourlyForecast(
+    // Получаем интерполированный почасовой прогноз (шаг 1 час)
+    const hourlyResult = await getInterpolatedHourlyForecast(
       {
         latitude: location.latitude,
         longitude: location.longitude
@@ -391,14 +383,33 @@ async function showHourlyForecast(
       'Europe/Moscow' // TODO: получать из БД
     );
 
+    // Если интерполированный прогноз не получен, пробуем обычный
     if (!hourlyResult.data || hourlyResult.data.length === 0) {
-      await ctx.editMessageText(
-        `Нет данных почасового прогноза для ${location.name} на выбранную дату.`,
+      const fallbackResult = await getHourlyForecast(
         {
-          reply_markup: getErrorKeyboard(userId)
-        }
+          latitude: location.latitude,
+          longitude: location.longitude
+        },
+        location.name,
+        dateStr,
+        locationId,
+        'RU', // TODO: получать из БД
+        'Europe/Moscow' // TODO: получать из БД
       );
-      return;
+
+      if (!fallbackResult.data || fallbackResult.data.length === 0) {
+        await ctx.editMessageText(
+          `Нет данных почасового прогноза для ${location.name} на выбранную дату.`,
+          {
+            reply_markup: getErrorKeyboard(userId)
+          }
+        );
+        return;
+      }
+
+      // Используем fallback данные
+      hourlyResult.data = fallbackResult.data;
+      hourlyResult.source = fallbackResult.source;
     }
 
     // Форматируем дату для отображения
@@ -406,15 +417,21 @@ async function showHourlyForecast(
       ? DateTime.now().toFormat('dd.MM.yyyy')
       : DateTime.fromISO(dateStr).toFormat('dd.MM.yyyy');
 
-    // Форматируем почасовой прогноз
-    const message = formatHourlyForecast(
+    // Форматируем улучшенный почасовой прогноз
+    let message = formatHourlyForecast(
       hourlyResult.data,
       location.name,
-      displayDate
+      displayDate,
+      false // compact = false для полного формата
     );
 
-    // Создаем простую клавиатуру с навигацией
-    const keyboard = getHourlyForecastKeyboard(locationId, userId);
+    // Добавляем информацию об источнике данных, если не из кэша
+    if (hourlyResult.source !== 'cache') {
+      message += `\n\n📡 Данные обновлены: ${hourlyResult.source}`;
+    }
+
+    // Создаем клавиатуру с навигацией (передаем dateStr для возврата к детальному)
+    const keyboard = getHourlyForecastKeyboard(locationId, userId, dateStr, true);
 
     // Отправляем/редактируем сообщение
     let sentMessage;
@@ -620,7 +637,33 @@ async function callbackForecast(ctx: Context): Promise<void> {
     );
 
     // Обрабатываем тип прогноза
-    if (forecastType === 'detailed' && locationId && dateStr) {
+    if (forecastType === 'detailed_refresh' && locationId && dateStr) {
+      // Обновление детального прогноза
+      const location = await prisma.location.findUnique({
+        where: { id: locationId }
+      });
+      if (location) {
+        const refreshedResult = await refreshDetailedForecast(
+          {
+            latitude: location.latitude,
+            longitude: location.longitude
+          },
+          location.name,
+          dateStr,
+          locationId,
+          'RU',
+          'Europe/Moscow'
+        );
+        if (refreshedResult.data) {
+          // Используем тот же обработчик, но с обновленными данными
+          await showDetailedForecast(ctx, locationId, dateStr, fromType || 'detailed');
+        } else {
+          await handleGeneralError(ctx, userId);
+        }
+      } else {
+        await handleGeneralError(ctx, userId);
+      }
+    } else if (forecastType === 'detailed' && locationId && dateStr) {
       await showDetailedForecast(ctx, locationId, dateStr, fromType);
     } else if (forecastType === 'hourly' && locationId && dateStr) {
       await showHourlyForecast(ctx, locationId, dateStr);

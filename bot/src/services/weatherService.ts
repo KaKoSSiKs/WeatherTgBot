@@ -35,6 +35,29 @@ export interface DailyForecastData {
   sunset?: number;
   detailedHours?: HourlyForecastData[];
   warning?: string;
+  timePeriods?: TimePeriodData;
+  detailedRecommendation?: string;
+}
+
+/**
+ * Данные периода суток (утро, день, вечер, ночь)
+ */
+export interface TimePeriodData {
+  утро?: PeriodInfo;
+  день?: PeriodInfo;
+  вечер?: PeriodInfo;
+  ночь?: PeriodInfo;
+}
+
+export interface PeriodInfo {
+  start: number;
+  end: number;
+  emoji: string;
+  avgTemp: number;
+  avgWind: number;
+  condition: string;
+  hourCount: number;
+  hoursData: HourlyForecastData[];
 }
 
 /**
@@ -446,6 +469,503 @@ function extractHourlyForecast(dayItems: any[]): HourlyForecastData[] {
   }
   
   return hourly;
+}
+
+/**
+ * Принудительно обновить детальный прогноз (без использования кэша)
+ */
+export async function refreshDetailedForecast(
+  coords: Coordinates,
+  cityName: string,
+  targetDate: string,
+  locationId?: number,
+  countryCode: string = 'RU',
+  timezone: string = 'Europe/Moscow'
+): Promise<{ data: DailyForecastData | null; source: string; error?: string }> {
+  // Удаляем старые данные из кэша
+  const cacheKey = locationId
+    ? `detailed:${locationId}:${targetDate}`
+    : `detailed:${coords.latitude},${coords.longitude}:${targetDate}`;
+  weatherCache.del(cacheKey);
+
+  // Получаем свежие данные
+  return await getDetailedDailyForecast(
+    coords,
+    cityName,
+    targetDate,
+    locationId,
+    countryCode,
+    timezone
+  );
+}
+
+/**
+ * Получить детальный прогноз на конкретный день с дополнительными данными
+ */
+export async function getDetailedDailyForecast(
+  coords: Coordinates,
+  cityName: string,
+  targetDate: string, // 'today' или 'YYYY-MM-DD'
+  locationId?: number,
+  countryCode: string = 'RU',
+  timezone: string = 'Europe/Moscow',
+  useCache: boolean = true
+): Promise<{ data: DailyForecastData | null; source: string; error?: string }> {
+  const cacheKey = locationId
+    ? `detailed:${locationId}:${targetDate}`
+    : `detailed:${coords.latitude},${coords.longitude}:${targetDate}`;
+
+  // Проверяем кэш только если useCache = true
+  if (useCache) {
+    const cached = weatherCache.get<DailyForecastData>(cacheKey);
+    if (cached) {
+      logger(`[WeatherService] cache hit for detailed forecast ${targetDate}`);
+      return { data: cached, source: 'cache' };
+    }
+  }
+
+  logger(`[WeatherService] cache miss for detailed forecast ${targetDate}`);
+
+  try {
+    // Получаем прогноз на 5 дней для детализации
+    const forecastResult = await getDailyForecast(
+      coords,
+      cityName,
+      5,
+      locationId,
+      countryCode,
+      timezone
+    );
+
+    if (!forecastResult.data || forecastResult.data.length === 0) {
+      return { data: null, source: forecastResult.source, error: forecastResult.error };
+    }
+
+    // Определяем целевую дату
+    const targetDateTime = targetDate === 'today'
+      ? DateTime.now().setZone(timezone).startOf('day')
+      : DateTime.fromISO(targetDate).setZone(timezone).startOf('day');
+
+    // Ищем нужный день
+    const dayForecast = forecastResult.data.find(forecast => {
+      const forecastDate = DateTime.fromJSDate(forecast.date).setZone(timezone).startOf('day');
+      return forecastDate.equals(targetDateTime);
+    });
+
+    if (!dayForecast) {
+      return { data: null, source: 'date_not_found', error: 'Date not found in forecast' };
+    }
+
+    // Получаем текущую погоду для дополнительных данных
+    const currentWeatherResult = await getCurrentWeatherByCoords(
+      coords,
+      cityName,
+      countryCode,
+      timezone
+    );
+
+    // Улучшаем детальный прогноз
+    const enhancedForecast = await enhanceDetailedForecast(
+      dayForecast,
+      currentWeatherResult.data,
+      targetDate,
+      timezone
+    );
+
+    // Сохраняем в кэш с увеличенным TTL
+    weatherCache.set(cacheKey, enhancedForecast, FORECAST_CACHE_TTL_SECONDS * 3);
+
+    return { data: enhancedForecast, source: forecastResult.source };
+  } catch (error) {
+    logger('[WeatherService] error getting detailed forecast:', error);
+    return { data: null, source: 'api_error', error: 'network_error' };
+  }
+}
+
+/**
+ * Улучшить детальный прогноз дополнительными данными
+ */
+async function enhanceDetailedForecast(
+  dayForecast: DailyForecastData,
+  currentWeather: WeatherData | null,
+  targetDate: string,
+  timezone: string
+): Promise<DailyForecastData> {
+  const enhanced = { ...dayForecast };
+
+  // Добавляем данные, которых нет в прогнозе
+  if (currentWeather) {
+    if (!enhanced.pressure || enhanced.pressure === 0) {
+      enhanced.pressure = currentWeather.pressure || 1013;
+    }
+    if (!enhanced.visibility || enhanced.visibility === 0) {
+      enhanced.visibility = currentWeather.visibility || 10000;
+    }
+    if (!enhanced.feelsLike) {
+      enhanced.feelsLike = currentWeather.feelsLike || enhanced.temp;
+    }
+  }
+
+  // Добавляем детальные периоды суток
+  enhanced.timePeriods = calculateTimePeriods(enhanced, timezone);
+
+  // Добавляем предупреждения
+  enhanced.warning = getWeatherWarning(enhanced);
+
+  // Добавляем расширенные рекомендации
+  enhanced.detailedRecommendation = getDetailedRecommendation(enhanced);
+
+  return enhanced;
+}
+
+/**
+ * Рассчитать данные для периодов суток (утро, день, вечер, ночь)
+ */
+function calculateTimePeriods(
+  dayForecast: DailyForecastData,
+  timezone: string
+): TimePeriodData {
+  // По ТЗ: утро 6-9, день 12-15, вечер 18-21, ночь 0-3
+  const periods: TimePeriodData = {
+    утро: { start: 6, end: 9, emoji: '☀️', avgTemp: 0, avgWind: 0, condition: '', hourCount: 0, hoursData: [] },
+    день: { start: 12, end: 15, emoji: '🌤️', avgTemp: 0, avgWind: 0, condition: '', hourCount: 0, hoursData: [] },
+    вечер: { start: 18, end: 21, emoji: '🌆', avgTemp: 0, avgWind: 0, condition: '', hourCount: 0, hoursData: [] },
+    ночь: { start: 0, end: 3, emoji: '🌙', avgTemp: 0, avgWind: 0, condition: '', hourCount: 0, hoursData: [] }
+  };
+
+  const hourlyData = dayForecast.detailedHours || [];
+  if (hourlyData.length === 0) {
+    // Если нет почасовых данных, используем дневные средние
+    for (const periodName in periods) {
+      const period = periods[periodName as keyof TimePeriodData]!;
+      period.avgTemp = dayForecast.temp;
+      period.avgWind = dayForecast.windSpeed;
+      period.condition = dayForecast.condition;
+    }
+    return periods;
+  }
+
+  // Группируем данные по периодам
+  for (const periodName in periods) {
+    const period = periods[periodName as keyof TimePeriodData]!;
+    const startHour = period.start;
+    const endHour = period.end;
+
+    const periodHours = hourlyData.filter(hourData => {
+      const hour = hourData.hour;
+      if (startHour < endHour) {
+        return hour >= startHour && hour < endHour;
+      } else {
+        // Для ночи (0-6)
+        return hour >= startHour || hour < endHour;
+      }
+    });
+
+    if (periodHours.length > 0) {
+      // Рассчитываем средние значения
+      const temps = periodHours.map(h => h.temp);
+      const winds = periodHours.map(h => h.windSpeed);
+      const conditions = periodHours.map(h => h.condition);
+
+      // Наиболее частое условие
+      const conditionCounts = new Map<string, number>();
+      for (const condition of conditions) {
+        conditionCounts.set(condition, (conditionCounts.get(condition) || 0) + 1);
+      }
+      const mostCommonCondition = Array.from(conditionCounts.entries())
+        .sort((a, b) => b[1] - a[1])[0]?.[0] || dayForecast.condition;
+
+      period.avgTemp = temps.reduce((a, b) => a + b, 0) / temps.length;
+      period.avgWind = winds.reduce((a, b) => a + b, 0) / winds.length;
+      period.condition = mostCommonCondition;
+      period.hourCount = periodHours.length;
+      period.hoursData = periodHours;
+    } else {
+      // Если нет данных, используем дневные средние
+      period.avgTemp = dayForecast.temp;
+      period.avgWind = dayForecast.windSpeed;
+      period.condition = dayForecast.condition;
+      period.hourCount = 0;
+      period.hoursData = [];
+    }
+  }
+
+  return periods;
+}
+
+/**
+ * Получить предупреждение МЧС на основе погодных условий
+ */
+function getWeatherWarning(forecast: DailyForecastData): string {
+  try {
+    const condition = (forecast.condition || '').toLowerCase();
+    const temp = forecast.temp || 0;
+    const windSpeed = forecast.windSpeed || 0;
+
+    const warnings: string[] = [];
+
+    // Предупреждения по температуре
+    if (temp < -20) {
+      warnings.push('сильные морозы');
+    } else if (temp < -10) {
+      warnings.push('морозы');
+    } else if (temp > 35) {
+      warnings.push('сильная жара');
+    } else if (temp > 30) {
+      warnings.push('жара');
+    }
+
+    // Предупреждения по ветру
+    if (windSpeed > 15) {
+      warnings.push('ураганный ветер');
+    } else if (windSpeed > 10) {
+      warnings.push('сильный ветер');
+    }
+
+    // Предупреждения по осадкам
+    if (condition.includes('дождь')) {
+      if (condition.includes('сильный') || condition.includes('ливень')) {
+        warnings.push('сильный дождь');
+      } else {
+        warnings.push('дождь');
+      }
+    }
+
+    if (condition.includes('снег')) {
+      if (condition.includes('сильный') || condition.includes('метель')) {
+        warnings.push('сильный снегопад');
+      } else {
+        warnings.push('снег');
+      }
+    }
+
+    if (condition.includes('гроза')) {
+      warnings.push('гроза');
+    }
+
+    if (condition.includes('туман') || condition.includes('дымка')) {
+      warnings.push('плохая видимость');
+    }
+
+    // Формируем итоговое предупреждение
+    if (warnings.length > 0) {
+      return `МЧС предупреждает: ${warnings.join(', ')}.`;
+    } else {
+      return 'Предупреждений МЧС нет.';
+    }
+  } catch (error) {
+    logger('[WeatherService] error generating weather warning:', error);
+    return 'Информация о предупреждениях временно недоступна.';
+  }
+}
+
+/**
+ * Получить расширенные рекомендации по одежде и активности
+ */
+function getDetailedRecommendation(forecast: DailyForecastData): string {
+  try {
+    const temp = forecast.temp || 0;
+    const feelsLike = forecast.feelsLike || temp;
+    const condition = (forecast.condition || '').toLowerCase();
+    const humidity = forecast.humidity || 50;
+    const windSpeed = forecast.windSpeed || 0;
+
+    const recommendations: string[] = [];
+
+    // Рекомендации по одежде на основе температуры
+    if (feelsLike < -15) {
+      recommendations.push('❄️ Очень холодно - наденьте теплую зимнюю одежду, шапку, шарф и перчатки.');
+      recommendations.push('👢 Обязательно носите теплую непромокаемую обувь.');
+    } else if (feelsLike < -5) {
+      recommendations.push('🧥 Холодно - наденьте зимнюю куртку или пальто, шапку.');
+      recommendations.push('🧤 Перчатки или варежки будут не лишними.');
+    } else if (feelsLike < 5) {
+      recommendations.push('🧥 Прохладно - наденьте куртку или пальто.');
+      recommendations.push('🧣 Легкий шарф может пригодиться.');
+    } else if (feelsLike < 15) {
+      recommendations.push('👔 Умеренно - легкая куртка или свитер будут комфортны.');
+      recommendations.push('🧥 Имейте с собой легкую верхнюю одежду на случай ветра.');
+    } else if (feelsLike < 25) {
+      recommendations.push('👕 Тепло - футболка или рубашка с длинным рукавом.');
+      recommendations.push('🧢 Можно надеть легкий головной убор от солнца.');
+    } else {
+      recommendations.push('🥵 Жарко - легкая одежда из натуральных тканей.');
+      recommendations.push('🧢 Обязательно головной убор от солнца и солнцезащитный крем.');
+    }
+
+    // Дополнительные рекомендации по осадкам
+    if (condition.includes('дождь')) {
+      recommendations.push('☔ Возьмите с собой зонт или наденьте непромокаемую одежду.');
+      recommendations.push('👟 Наденьте непромокаемую обувь.');
+    }
+
+    if (condition.includes('снег')) {
+      recommendations.push('❄️ Одежда должна быть непромокаемой и теплой.');
+      recommendations.push('👢 Обувь с нескользящей подошвой.');
+    }
+
+    if (condition.includes('ветер') || windSpeed > 5) {
+      recommendations.push('💨 Ветрено - наденьте ветровку или одежду, которая не продувается.');
+    }
+
+    if (condition.includes('солнце') || condition.includes('ясно')) {
+      if (temp > 20) {
+        recommendations.push('☀️ Солнечно - используйте солнцезащитный крем SPF 30+.');
+      }
+    }
+
+    // Рекомендации по влажности
+    if (humidity > 80) {
+      recommendations.push('💧 Высокая влажность - одежда из дышащих тканей будет комфортнее.');
+    }
+
+    // Активности
+    if (temp > 15 && !condition.includes('дождь')) {
+      if (condition.includes('ясно') || condition.includes('солнце')) {
+        recommendations.push('🌳 Хороший день для прогулок на свежем воздухе.');
+      }
+    }
+
+    if (temp < 0 || condition.includes('дождь') || condition.includes('снег')) {
+      recommendations.push('🏠 Планируйте больше времени проводить в помещении.');
+    }
+
+    return recommendations.join('\n');
+  } catch (error) {
+    logger('[WeatherService] error generating detailed recommendation:', error);
+    return '🧥 Одевайтесь по погоде.';
+  }
+}
+
+/**
+ * Получить интерполированный почасовой прогноз (шаг 1 час)
+ */
+export async function getInterpolatedHourlyForecast(
+  coords: Coordinates,
+  cityName: string,
+  targetDate: string, // 'today' или 'YYYY-MM-DD'
+  locationId?: number,
+  countryCode: string = 'RU',
+  timezone: string = 'Europe/Moscow'
+): Promise<{ data: HourlyForecastData[] | null; source: string; error?: string }> {
+  const cacheKey = locationId
+    ? `hourly_interpolated:${locationId}:${targetDate}`
+    : `hourly_interpolated:${coords.latitude},${coords.longitude}:${targetDate}`;
+
+  // Проверяем кэш
+  const cached = weatherCache.get<HourlyForecastData[]>(cacheKey);
+  if (cached) {
+    logger(`[WeatherService] cache hit for interpolated hourly forecast ${targetDate}`);
+    return { data: cached, source: 'cache' };
+  }
+
+  logger(`[WeatherService] cache miss for interpolated hourly forecast ${targetDate}`);
+
+  try {
+    // Получаем базовый почасовой прогноз (шаг 3 часа)
+    const baseHourlyResult = await getHourlyForecast(
+      coords,
+      cityName,
+      targetDate,
+      locationId,
+      countryCode,
+      timezone
+    );
+
+    if (!baseHourlyResult.data || baseHourlyResult.data.length === 0) {
+      return { data: null, source: baseHourlyResult.source, error: baseHourlyResult.error };
+    }
+
+    // Интерполируем до шага 1 час
+    const interpolated = interpolateHourlyData(baseHourlyResult.data);
+
+    // Сохраняем в кэш
+    weatherCache.set(cacheKey, interpolated, FORECAST_CACHE_TTL_SECONDS * 2);
+
+    return { data: interpolated, source: baseHourlyResult.source };
+  } catch (error) {
+    logger('[WeatherService] error getting interpolated hourly forecast:', error);
+    return { data: null, source: 'api_error', error: 'network_error' };
+  }
+}
+
+/**
+ * Интерполировать данные с шага 3 часа до шага 1 час
+ */
+function interpolateHourlyData(baseData: HourlyForecastData[]): HourlyForecastData[] {
+  try {
+    if (baseData.length < 2) {
+      return baseData;
+    }
+
+    const interpolated: HourlyForecastData[] = [];
+
+    for (let i = 0; i < baseData.length - 1; i++) {
+      const current = baseData[i];
+      const next = baseData[i + 1];
+
+      // Добавляем текущий час
+      interpolated.push({ ...current });
+
+      // Интерполируем промежуточные часы
+      const currentHour = current.hour;
+      const nextHour = next.hour;
+
+      // Если разница больше 1 часа, интерполируем
+      if (nextHour > currentHour + 1) {
+        for (let hour = currentHour + 1; hour < nextHour; hour++) {
+          // Линейная интерполяция
+          const ratio = (hour - currentHour) / (nextHour - currentHour);
+
+          const interpolatedHour: HourlyForecastData = {
+            time: `${hour.toString().padStart(2, '0')}:00`,
+            hour: hour,
+            temp: current.temp + (next.temp - current.temp) * ratio,
+            feelsLike: current.feelsLike + (next.feelsLike - current.feelsLike) * ratio,
+            condition: ratio < 0.5 ? current.condition : next.condition,
+            humidity: Math.round(current.humidity + (next.humidity - current.humidity) * ratio),
+            pressure: current.pressure
+              ? current.pressure + (next.pressure! - current.pressure) * ratio
+              : undefined,
+            windSpeed: current.windSpeed + (next.windSpeed - current.windSpeed) * ratio,
+            windDeg: Math.round(current.windDeg + (next.windDeg - current.windDeg) * ratio)
+          };
+
+          interpolated.push(interpolatedHour);
+        }
+      }
+    }
+
+    // Добавляем последний элемент
+    interpolated.push({ ...baseData[baseData.length - 1] });
+
+    // Убедимся, что у нас 24 часа
+    if (interpolated.length < 24) {
+      // Дублируем последние значения
+      const lastHour = interpolated[interpolated.length - 1];
+      const lastHourValue = lastHour.hour;
+
+      for (let hour = lastHourValue + 1; hour < 24; hour++) {
+        interpolated.push({
+          time: `${hour.toString().padStart(2, '0')}:00`,
+          hour: hour,
+          temp: lastHour.temp,
+          feelsLike: lastHour.feelsLike,
+          condition: lastHour.condition,
+          humidity: lastHour.humidity,
+          pressure: lastHour.pressure,
+          windSpeed: lastHour.windSpeed,
+          windDeg: lastHour.windDeg
+        });
+      }
+    }
+
+    // Обрезаем до 24 часов
+    return interpolated.slice(0, 24);
+  } catch (error) {
+    logger('[WeatherService] error interpolating hourly data:', error);
+    return baseData;
+  }
 }
 
 /**
