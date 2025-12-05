@@ -16,7 +16,6 @@ import { connectPrisma, disconnectPrisma } from './db/prisma';
 
 async function main() {
   logger('Bot starting...');
-  logger('Bot Token:', appConfig.BOT_TOKEN);
   
   // Подключаемся к базе данных
   try {
