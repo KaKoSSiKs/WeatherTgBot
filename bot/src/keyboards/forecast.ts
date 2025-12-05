@@ -148,6 +148,14 @@ export function getDetailedForecastKeyboard(
     .text('🔔 Уведомить', NotificationCallback.create('add', 0, 'forecast_detailed'))
     .row();
   
+  // Кнопка обновления (если есть дата)
+  // Используем специальный формат для обновления: forecast:detailed_refresh:...
+  if (dateStr) {
+    keyboard
+      .text('🔄 Обновить', `forecast:detailed_refresh:${locationId}:${dateStr}:${fromForecastType}`)
+      .row();
+  }
+  
   // Навигационные кнопки
   addNavigationButtons(keyboard, userId);
   
@@ -181,9 +189,28 @@ export function getDailyForecastItemKeyboard(
  */
 export function getHourlyForecastKeyboard(
   locationId: number,
-  userId: number
+  userId: number,
+  dateStr?: string,
+  fromDetailed?: boolean
 ): InlineKeyboard {
   const keyboard = new InlineKeyboard();
+  
+  // Кнопка возврата к детальному прогнозу (если открыли из детального)
+  if (fromDetailed && dateStr) {
+    keyboard
+      .text('📅 Вернуться к детальному', ForecastCallback.create('detailed', locationId, dateStr, 'hourly'))
+      .row();
+  }
+  
+  // Кнопка смены города
+  keyboard
+    .text('📍 Сменить город', WeatherCallback.create('change_city', locationId, 'hourly_forecast'))
+    .row();
+  
+  // Кнопка уведомления
+  keyboard
+    .text('🔔 Уведомить', NotificationCallback.create('add', 0, 'forecast_hourly'))
+    .row();
   
   // Навигационные кнопки
   addNavigationButtons(keyboard, userId);

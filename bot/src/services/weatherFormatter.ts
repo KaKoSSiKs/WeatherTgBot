@@ -297,7 +297,7 @@ export function formatDailyForecast(
 }
 
 /**
- * Отформатировать детальный прогноз на день
+ * Отформатировать детальный прогноз на день (улучшенная версия по ТЗ)
  */
 export function formatDetailedForecast(
   forecastData: DailyForecastData,
@@ -313,8 +313,6 @@ export function formatDetailedForecast(
     const conditionEmoji = getWeatherEmoji(condition);
     
     const temp = forecastData.temp || 0;
-    const tempMin = forecastData.tempMin || temp;
-    const tempMax = forecastData.tempMax || temp;
     const feelsLike = forecastData.feelsLike || temp;
     
     const humidity = forecastData.humidity || 0;
@@ -338,45 +336,53 @@ export function formatDetailedForecast(
       sunsetTime = sunset.toFormat('HH:mm');
     }
     
-    // Почасовой прогноз (утро, день, вечер, ночь)
-    const hourlyData = forecastData.detailedHours || [];
-    const timePeriods: Array<{ name: string; start: number; end: number; emoji: string }> = [
-      { name: 'Утро', start: 6, end: 12, emoji: '☀️' },
-      { name: 'День', start: 12, end: 18, emoji: '🌤️' },
-      { name: 'Вечер', start: 18, end: 24, emoji: '🌆' },
-      { name: 'Ночь', start: 0, end: 6, emoji: '🌙' }
-    ];
+    // Периоды суток (используем данные из timePeriods, если есть)
+    const timePeriods = forecastData.timePeriods;
+    const periodTexts: string[] = [];
     
-    const periodForecasts: string[] = [];
-    for (const period of timePeriods) {
-      const periodHours = hourlyData.filter(h => {
-        const hour = h.hour;
-        if (period.start < period.end) {
-          return hour >= period.start && hour < period.end;
-        } else {
-          // Для ночи (0-6)
-          return hour >= period.start || hour < period.end;
-        }
-      });
+    if (timePeriods) {
+      // Утро (6:00-9:00) - по ТЗ
+      if (timePeriods.утро) {
+        const period = timePeriods.утро;
+        const tempStr = period.avgTemp >= 0 ? `+${period.avgTemp.toFixed(1)}` : period.avgTemp.toFixed(1);
+        periodTexts.push(
+          `${period.emoji} Утро (6:00-9:00): ${tempStr}°C, ветер ${period.avgWind.toFixed(1)} м/с`
+        );
+      }
       
-      if (periodHours.length > 0) {
-        const avgTemp = periodHours.reduce((sum, h) => sum + h.temp, 0) / periodHours.length;
-        const avgWind = periodHours.reduce((sum, h) => sum + h.windSpeed, 0) / periodHours.length;
-        const periodCondition = periodHours[0]?.condition || 'Неизвестно';
-        const periodEmoji = getWeatherEmoji(periodCondition);
-        
-        periodForecasts.push(
-          `${periodEmoji} ${period.name} (${period.start.toString().padStart(2, '0')}:00-${period.end.toString().padStart(2, '0')}:00): ` +
-          `${avgTemp.toFixed(1)}°C, ветер ${avgWind.toFixed(1)} м/с`
+      // День (12:00-15:00) - по ТЗ
+      if (timePeriods.день) {
+        const period = timePeriods.день;
+        const tempStr = period.avgTemp >= 0 ? `+${period.avgTemp.toFixed(1)}` : period.avgTemp.toFixed(1);
+        periodTexts.push(
+          `${period.emoji} День (12:00-15:00): ${tempStr}°C, ветер ${period.avgWind.toFixed(1)} м/с`
+        );
+      }
+      
+      // Вечер (18:00-21:00) - по ТЗ
+      if (timePeriods.вечер) {
+        const period = timePeriods.вечер;
+        const tempStr = period.avgTemp >= 0 ? `+${period.avgTemp.toFixed(1)}` : period.avgTemp.toFixed(1);
+        periodTexts.push(
+          `${period.emoji} Вечер (18:00-21:00): ${tempStr}°C, ветер ${period.avgWind.toFixed(1)} м/с`
+        );
+      }
+      
+      // Ночь (0:00-3:00) - по ТЗ
+      if (timePeriods.ночь) {
+        const period = timePeriods.ночь;
+        const tempStr = period.avgTemp >= 0 ? `+${period.avgTemp.toFixed(1)}` : period.avgTemp.toFixed(1);
+        periodTexts.push(
+          `${period.emoji} Ночь (0:00-3:00): ${tempStr}°C, ветер ${period.avgWind.toFixed(1)} м/с`
         );
       }
     }
     
-    const periodText = periodForecasts.length > 0 
-      ? periodForecasts.join('\n')
+    const periodText = periodTexts.length > 0 
+      ? periodTexts.join('\n')
       : 'Нет данных по периодам';
     
-    // Формируем сообщение
+    // Формируем сообщение по точному ТЗ
     let message = `🌍 ${cityName}, ${countryCode} | Прогноз на ${dateStr}\n\n`;
     message += `${conditionEmoji} ${condition}\n\n`;
     message += `🌡 Температура: ${temp.toFixed(1)}°C\n`;
@@ -389,19 +395,19 @@ export function formatDetailedForecast(
     message += `🌅 Восход: ${sunriseTime}\n`;
     message += `🌇 Закат: ${sunsetTime}`;
     
-    // Добавляем рекомендации
+    // Добавляем рекомендации (используем расширенные, если есть)
     if (includeRecommendations) {
-      const recommendation = getTemperatureRecommendation(temp, feelsLike);
+      const recommendation = forecastData.detailedRecommendation || getTemperatureRecommendation(temp, feelsLike);
       message += `\n\n💡 Рекомендации:\n${recommendation}`;
     }
     
     // Добавляем предупреждения
     const warning = forecastData.warning || '';
     if (includeWarnings) {
-      if (warning) {
-        message += `\n\n⚠️ Предупреждение МЧС: ${warning}`;
+      if (warning && warning !== 'Предупреждений МЧС нет.') {
+        message += `\n\n⚠️ ${warning}`;
       } else {
-        message += '\n\n⚠️ Предупреждений нет';
+        message += '\n\n⚠️ Предупреждений МЧС нет.';
       }
     }
     
@@ -412,49 +418,82 @@ export function formatDetailedForecast(
 }
 
 /**
- * Отформатировать почасовой прогноз
+ * Отформатировать почасовой прогноз (улучшенная версия с шагом 1 час)
  */
 export function formatHourlyForecast(
   hourlyData: HourlyForecastData[],
   cityName: string,
-  dateStr: string
+  dateStr: string,
+  compact: boolean = false
 ): string {
   try {
     if (!hourlyData || hourlyData.length === 0) {
       return `⏱️ Нет данных почасового прогноза для ${cityName} на ${dateStr}`;
     }
     
+    // Заголовок
     let message = `⏱️ Почасовой прогноз для ${cityName} на ${dateStr}\n\n`;
     
-    // Группируем по 6 часов для лучшей читаемости, если данных много
-    if (hourlyData.length > 12) {
-      for (let i = 0; i < hourlyData.length; i += 6) {
-        const chunk = hourlyData.slice(i, i + 6);
-        for (const hourData of chunk) {
-          const timeStr = hourData.time || '00:00';
-          const temp = hourData.temp || 0;
-          const condition = hourData.condition || 'Неизвестно';
-          const emoji = getWeatherEmoji(condition);
-          const windSpeed = hourData.windSpeed || 0;
-          
-          message += `${timeStr} ${emoji} ${temp.toFixed(1)}°C, 💨 ${windSpeed.toFixed(1)} м/с\n`;
-        }
-        
-        // Добавляем пустую строку между группами
-        if (i + 6 < hourlyData.length) {
-          message += '\n';
-        }
-      }
-    } else {
-      // Если данных мало, показываем все
+    // Если данных мало (до 12 часов), показываем все подробно
+    if (hourlyData.length <= 12) {
       for (const hourData of hourlyData) {
         const timeStr = hourData.time || '00:00';
         const temp = hourData.temp || 0;
         const condition = hourData.condition || 'Неизвестно';
-        const emoji = getWeatherEmoji(condition);
         const windSpeed = hourData.windSpeed || 0;
         
-        message += `${timeStr} ${emoji} ${temp.toFixed(1)}°C, 💨 ${windSpeed.toFixed(1)} м/с\n`;
+        // Определяем эмодзи для времени суток
+        const hour = hourData.hour || 0;
+        let timeEmoji: string;
+        if (6 <= hour && hour < 12) {
+          timeEmoji = '☀️';
+        } else if (12 <= hour && hour < 18) {
+          timeEmoji = '🌤️';
+        } else if (18 <= hour && hour < 24) {
+          timeEmoji = '🌆';
+        } else {
+          timeEmoji = '🌙';
+        }
+        
+        if (compact) {
+          message += `${timeStr} ${timeEmoji} ${temp.toFixed(1)}°C\n`;
+        } else {
+          message += `${timeStr} ${timeEmoji} ${temp.toFixed(1)}°C, 💨 ${windSpeed.toFixed(1)} м/с\n`;
+        }
+      }
+    } else {
+      // Если данных много (24 часа), показываем все с группировкой
+      for (const hourData of hourlyData) {
+        const timeStr = hourData.time || '00:00';
+        const temp = hourData.temp || 0;
+        const windSpeed = hourData.windSpeed || 0;
+        
+        // Определяем эмодзи для времени суток
+        const hour = hourData.hour || 0;
+        let timeEmoji: string;
+        if (6 <= hour && hour < 12) {
+          timeEmoji = '☀️';
+        } else if (12 <= hour && hour < 18) {
+          timeEmoji = '🌤️';
+        } else if (18 <= hour && hour < 24) {
+          timeEmoji = '🌆';
+        } else {
+          timeEmoji = '🌙';
+        }
+        
+        message += `${timeStr} ${timeEmoji} ${temp.toFixed(1)}°C, 💨 ${windSpeed.toFixed(1)} м/с\n`;
+      }
+      
+      // Добавляем сводку, если есть 24 часа данных
+      if (hourlyData.length >= 24) {
+        const temps = hourlyData.map(h => h.temp);
+        const winds = hourlyData.map(h => h.windSpeed);
+        const maxTemp = Math.max(...temps);
+        const minTemp = Math.min(...temps);
+        const avgWind = winds.reduce((a, b) => a + b, 0) / winds.length;
+        
+        message += `\n📊 Сводка за день:\n`;
+        message += `Макс: ${maxTemp.toFixed(1)}°C, Мин: ${minTemp.toFixed(1)}°C, Средний ветер: ${avgWind.toFixed(1)} м/с`;
       }
     }
     
