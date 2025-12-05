@@ -5,7 +5,7 @@ import { DEFAULT_CITY } from '../utils/geocoding';
 import type { WeatherProvider } from '../weather/provider';
 import { startSetupWizard } from '../dialogs/setup';
 import { logger } from '../utils/logger';
-import { MenuCallback, ForecastCallback, NavCallback } from '../keyboards/callback_data';
+import { MenuCallback, NavCallback } from '../keyboards/callback_data';
 import { resetToMainMenu, pushNavigationState, popNavigationState, type NavigationState } from '../utils/navigation';
 import { addNavigationButtons } from '../keyboards/navigation';
 
@@ -165,40 +165,6 @@ export function registerWelcomeCommand(bot: Bot<Context>, weatherProvider: Weath
       default:
         await ctx.reply('Неизвестная команда. Попробуйте ещё раз.');
     }
-  });
-
-  // Обработчик callback'ов прогнозов
-  bot.callbackQuery(/^forecast:/, async (ctx) => {
-    const data = ctx.callbackQuery.data ?? '';
-    const userId = ctx.from?.id;
-    
-    if (!userId) return;
-
-    try {
-      await ctx.answerCallbackQuery();
-    } catch (error: any) {
-      if (error.description?.includes('query is too old')) {
-        return;
-      }
-      throw error;
-    }
-
-    const parsed = ForecastCallback.parse(data);
-    if (!parsed) {
-      await ctx.reply('Ошибка обработки запроса.');
-      return;
-    }
-
-    // TODO: Реализовать получение прогноза
-    const forecastText = `📅 Прогноз на ${parsed.type === 'day' ? 'день' : parsed.type === '3day' ? '3 дня' : parsed.type === '7day' ? '7 дней' : '10 дней'}\n\nРаздел в разработке.`;
-    
-    const keyboard = new InlineKeyboard();
-    addNavigationButtons(keyboard, userId);
-    
-    const message = await ctx.reply(forecastText, {
-      reply_markup: keyboard
-    });
-    pushNavigationState(userId, `forecast_${parsed.type}`, { type: parsed.type, cityId: parsed.cityId }, message.message_id);
   });
 
   // Обработчик навигационных callback'ов

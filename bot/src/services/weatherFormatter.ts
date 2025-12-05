@@ -269,13 +269,13 @@ export function formatDailyForecast(
     const windDeg = forecastData.windDeg || 0;
     const windDirection = getWindDirection(windDeg);
     
+    const feelsLike = forecastData.feelsLike || temp;
+    
     let message = `🌍 ${cityName}, ${countryCode} | Прогноз на ${dateStr}\n\n`;
-    message += `${conditionEmoji} ${condition}\n\n`;
-    message += `🌡 Температура: ${temp.toFixed(1)}°C`;
-    if (tempMin !== tempMax) {
-      message += ` (мин: ${tempMin.toFixed(1)}°C, макс: ${tempMax.toFixed(1)}°C)`;
-    }
-    message += `\n💧 Влажность: ${humidity}%\n`;
+    message += `${conditionEmoji} ${condition}\n`;
+    message += `🌡 Температура: ${temp.toFixed(1)}°C\n`;
+    message += `🤚 Ощущается как: ${feelsLike.toFixed(1)}°C\n`;
+    message += `💧 Влажность: ${humidity}%\n`;
     message += `💨 Ветер: ${windSpeed.toFixed(1)} м/с, ${windDirection}`;
     
     // Добавляем рекомендации, если нужно
