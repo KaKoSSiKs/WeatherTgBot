@@ -31,13 +31,53 @@ model Location {
 }
 
 model Notification {
-  id          Int       @id @default(autoincrement())
-  type        String
-  time        String?
-  days        String?
-  enabled     Boolean   @default(true)
-  userId      Int
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  locationId  Int?
-  location    Location? @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  id               Int       @id @default(autoincrement())
+  
+  // Тип подписки: 'regular_forecast' | 'weather_event'
+  subscriptionType String    @default("regular_forecast")
+  
+  // Подтип: для regular_forecast: 'current', 'today', 'tomorrow', '3day', '7day', '10day'
+  // Для weather_event: 'temperature_change', 'precipitation', 'wind'
+  subtype          String    @default("today")
+  
+  // Параметры в JSON формате
+  // Для regular_forecast: { time: "08:00" }
+  // Для weather_event: { direction: "any", threshold: 5, check_interval_hours: 2 }
+  parameters       String    @default("{}")
+  
+  // Расписание: 'daily', 'weekdays', 'weekends', 'once'
+  schedule         String    @default("daily")
+  
+  // Время следующего уведомления
+  nextNotification DateTime?
+  
+  // Время последней проверки
+  lastChecked      DateTime?
+  
+  // Состояние
+  enabled          Boolean   @default(true)
+  
+  // Приостановлено до
+  pauseUntil       DateTime?
+  
+  // Пользовательское название
+  customName       String?
+  
+  // Метаданные
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  
+  // Legacy поля для совместимости
+  type             String    @default("daily")
+  time             String?
+  days             String?
+  
+  // Связи
+  userId           Int
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  locationId       Int?
+  location         Location? @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([nextNotification])
 }

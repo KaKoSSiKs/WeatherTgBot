@@ -1,12 +1,13 @@
 import { InlineKeyboard } from 'grammy';
-import { MenuCallback, ForecastCallback } from './callback_data';
+import { MenuCallback, ForecastCallback, NotificationCallback } from './callback_data';
 
 /**
  * Создает главное меню с InlineKeyboard
  * Формат согласно новому дизайну UX/UI:
  * - Строка 1: Текущая погода, Прогноз на день
  * - Строка 2: На 3 дня, На 7 дней, На 10 дней
- * - Строка 3: Настройки, Помощь
+ * - Строка 3: Уведомления, Настройки
+ * - Строка 4: Помощь
  */
 export function mainMenuKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
@@ -19,8 +20,11 @@ export function mainMenuKeyboard(): InlineKeyboard {
     .text('📅 На 7 дней', ForecastCallback.create('7day', undefined, undefined, 'main_menu'))
     .text('📅 На 10 дней', ForecastCallback.create('10day', undefined, undefined, 'main_menu'))
     .row()
-    // Строка 3: Настройки и помощь
+    // Строка 3: Уведомления и настройки
+    .text('🔔 Уведомления', NotificationCallback.create('main'))
     .text('⚙️ Настройки', MenuCallback.create('settings'))
+    .row()
+    // Строка 4: Помощь
     .text('❓ Помощь', MenuCallback.create('help'));
 }
 

@@ -12,6 +12,8 @@ import { registerSetupDialog } from './dialogs/setup';
 import { registerCurrentWeatherHandlers } from './handlers/currentWeather';
 import { registerForecastHandlers } from './handlers/forecast';
 import { registerSettingsHandlers } from './handlers/settings';
+import { registerNotificationHandlers } from './handlers/notifications';
+import { getNotificationService } from './services/notificationService';
 import { connectPrisma, disconnectPrisma } from './db/prisma';
 
 async function main() {
@@ -50,11 +52,18 @@ async function main() {
   registerForecastHandlers(bot);
   // Регистрируем обработчики настроек
   registerSettingsHandlers(bot);
+  // Регистрируем обработчики уведомлений
+  registerNotificationHandlers(bot);
   registerWelcomeCommand(bot, weatherProvider);
   registerAddCommand(bot);
   registerListCommand(bot);
   registerWeatherCommand(bot, weatherProvider);
   registerSetupDialog(bot);
+  
+  // Инициализируем и запускаем сервис уведомлений
+  const notificationService = getNotificationService(bot, appConfig.TZ);
+  notificationService.startScheduler();
+  logger('Notification scheduler started');
   
   await bot.api.getMe();
   logger('Bot is ready and running');
@@ -71,12 +80,24 @@ main().catch(async (err) => {
 // Обработка завершения процесса
 process.on('SIGINT', async () => {
   logger('Received SIGINT, shutting down gracefully...');
+  try {
+    const notificationService = getNotificationService();
+    notificationService.stopScheduler();
+  } catch (e) {
+    // Сервис может быть не инициализирован
+  }
   await disconnectPrisma();
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
   logger('Received SIGTERM, shutting down gracefully...');
+  try {
+    const notificationService = getNotificationService();
+    notificationService.stopScheduler();
+  } catch (e) {
+    // Сервис может быть не инициализирован
+  }
   await disconnectPrisma();
   process.exit(0);
 });

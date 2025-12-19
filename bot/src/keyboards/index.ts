@@ -18,4 +18,5 @@ export {
   getDailyForecastItemKeyboard,
   getHourlyForecastKeyboard
 } from './forecast';
+export * from './notifications';
 

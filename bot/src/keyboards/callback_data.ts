@@ -134,22 +134,44 @@ export const SettingsCallback = {
 
 /**
  * Уведомления
- * Формат: notification:action:id:step
- * action: add, edit, delete, toggle, confirm
+ * Формат: notification:action:id:param1:param2
+ * action: main, list, add, edit, delete, toggle, confirm, detail, test, refresh
  * id: 0 для новых, >0 для существующих
- * step: city, time, type, confirm
+ * param1/param2: дополнительные параметры в зависимости от action
  */
 export const NotificationCallback = {
   prefix: 'notification',
-  create: (action: string, id?: string | number, step?: string) =>
-    createCallbackData('notification', action, id, step),
+  create: (action: string, id?: string | number, param1?: string, param2?: string) =>
+    createCallbackData('notification', action, id, param1, param2),
   parse: (data: string) => {
     const parsed = parseCallbackData(data);
     if (parsed.prefix !== 'notification' || parsed.params.length < 1) return null;
     return {
       action: parsed.params[0],
       id: parsed.params[1] ? Number(parsed.params[1]) : undefined,
-      step: parsed.params[2]
+      param1: parsed.params[2],
+      param2: parsed.params[3]
+    };
+  }
+} as const;
+
+/**
+ * Создание уведомления (визард)
+ * Формат: notif_create:step:value:extra
+ * step: type, subtype, city, time, frequency, event_param, confirm
+ * value: выбранное значение
+ */
+export const NotifCreateCallback = {
+  prefix: 'notif_create',
+  create: (step: string, value?: string, extra?: string) =>
+    createCallbackData('notif_create', step, value, extra),
+  parse: (data: string) => {
+    const parsed = parseCallbackData(data);
+    if (parsed.prefix !== 'notif_create' || parsed.params.length < 1) return null;
+    return {
+      step: parsed.params[0],
+      value: parsed.params[1],
+      extra: parsed.params[2]
     };
   }
 } as const;

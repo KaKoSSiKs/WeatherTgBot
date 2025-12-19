@@ -110,7 +110,7 @@ function getTemperatureRecommendation(temp: number, feelsLike: number): string {
 /**
  * Получить эмодзи для погодного условия
  */
-function getWeatherEmoji(condition: string): string {
+export function getWeatherEmoji(condition: string): string {
   const conditionLower = condition.toLowerCase();
   
   if (conditionLower.includes('clear') || conditionLower.includes('ясно')) {
@@ -415,6 +415,68 @@ export function formatDetailedForecast(
   } catch (error) {
     return `🌍 ${cityName}, ${countryCode} | Прогноз на ${forecastData.dateStr || 'дату'}\n\n⚠️ Не удалось получить детальные данные о прогнозе.\n\nПожалуйста, попробуйте обновить данные через несколько минут.`;
   }
+}
+
+/**
+ * Отформатировать краткий прогноз на несколько дней
+ */
+export function formatDailyForecastBrief(
+  forecasts: DailyForecastData[],
+  cityName: string,
+  days: number,
+  countryCode: string = 'RU'
+): string {
+  try {
+    if (!forecasts || forecasts.length === 0) {
+      return `📅 Нет данных прогноза для ${cityName}`;
+    }
+
+    const actualDays = Math.min(days, forecasts.length);
+    let message = `🌍 ${cityName}, ${countryCode}\n📅 Прогноз на ${actualDays} ${getDaysWord(actualDays)}\n\n`;
+
+    for (let i = 0; i < actualDays; i++) {
+      const forecast = forecasts[i];
+      const dateStr = forecast.dateStr || '';
+      const condition = forecast.condition || 'Неизвестно';
+      const conditionEmoji = getWeatherEmoji(condition);
+      
+      const tempMin = forecast.tempMin || forecast.temp || 0;
+      const tempMax = forecast.tempMax || forecast.temp || 0;
+      const windSpeed = forecast.windSpeed || 0;
+
+      // Форматируем строку для дня
+      message += `📅 ${dateStr}\n`;
+      message += `${conditionEmoji} ${condition}\n`;
+      message += `🌡️ ${tempMin.toFixed(0)}°...${tempMax.toFixed(0)}°C`;
+      message += ` | 💨 ${windSpeed.toFixed(1)} м/с\n\n`;
+    }
+
+    return message.trim();
+  } catch (error) {
+    return `📅 Ошибка форматирования прогноза для ${cityName}`;
+  }
+}
+
+/**
+ * Получить правильное склонение слова "день"
+ */
+function getDaysWord(days: number): string {
+  const lastDigit = days % 10;
+  const lastTwoDigits = days % 100;
+  
+  if (lastTwoDigits >= 11 && lastTwoDigits <= 14) {
+    return 'дней';
+  }
+  
+  if (lastDigit === 1) {
+    return 'день';
+  }
+  
+  if (lastDigit >= 2 && lastDigit <= 4) {
+    return 'дня';
+  }
+  
+  return 'дней';
 }
 
 /**
