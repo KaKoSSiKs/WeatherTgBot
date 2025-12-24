@@ -13,7 +13,6 @@ export function notificationMainKeyboard(): InlineKeyboard {
     .text('➕ Новая подписка', NotificationCallback.create('add'))
     .text('📋 Мои подписки', NotificationCallback.create('list'))
     .row()
-    .text('⚙️ Настройки', NotificationCallback.create('settings'))
     .text('🏠 Главное меню', NavCallback.create('main_menu'));
 }
 

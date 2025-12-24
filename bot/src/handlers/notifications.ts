@@ -1229,9 +1229,6 @@ export function registerNotificationHandlers(bot: Bot<Context>): void {
       case 'test':
         if (id) await sendTestNotification(ctx, id);
         break;
-      case 'settings':
-        await ctx.reply('⚙️ Настройки уведомлений в разработке.');
-        break;
     }
   });
 
