@@ -1,6 +1,7 @@
 import type { Bot, Context } from 'grammy';
 import { InlineKeyboard } from 'grammy';
 import { mainMenuKeyboard, MAIN_MENU_TEXT } from '../keyboards';
+import { showSettingsMainMenu } from '../handlers/settings';
 import { DEFAULT_CITY } from '../utils/geocoding';
 import type { WeatherProvider } from '../weather/provider';
 import { startSetupWizard } from '../dialogs/setup';
@@ -40,14 +41,8 @@ async function restoreNavigationState(ctx: Context, userId: number, state: Navig
       break;
     }
     case 'settings': {
-      const settingsKeyboard = new InlineKeyboard();
-      addNavigationButtons(settingsKeyboard, userId);
-      const result = await ctx.editMessageText('⚙️ Настройки\n\nРаздел в разработке.', {
-        reply_markup: settingsKeyboard
-      });
-      if (result && typeof result === 'object' && 'message_id' in result) {
-        pushNavigationState(userId, 'settings', {}, result.message_id);
-      }
+      // Use the settings menu handler
+      await showSettingsMainMenu(ctx);
       break;
     }
     case 'help': {
@@ -136,12 +131,7 @@ export function registerWelcomeCommand(bot: Bot<Context>, weatherProvider: Weath
 
     switch (parsed.action) {
       case 'settings': {
-        const settingsKeyboard = new InlineKeyboard();
-        addNavigationButtons(settingsKeyboard, userId);
-        const message = await ctx.reply('⚙️ Настройки\n\nРаздел в разработке.', {
-          reply_markup: settingsKeyboard
-        });
-        pushNavigationState(userId, 'settings', {}, message.message_id);
+        await showSettingsMainMenu(ctx);
         break;
       }
       case 'help': {

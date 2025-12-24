@@ -29,6 +29,27 @@ import {
 import { getErrorKeyboard } from '../keyboards/currentWeather';
 import { DateTime } from 'luxon';
 
+async function getUserSettingsForFormattingSafe(telegramId: string): Promise<{
+  defaultCityId: number | null;
+  displaySettings?: Record<string, boolean>;
+}> {
+  const prismaAny = prisma as any;
+  try {
+    const user = await prismaAny.user?.findUnique?.({
+      where: { telegramId },
+      include: { settings: true }
+    });
+    const defaultCityId = typeof user?.settings?.defaultCityId === 'number' ? user.settings.defaultCityId : null;
+
+    const raw = user?.settings?.displaySettings;
+    const displaySettings = raw ? (JSON.parse(raw) as Record<string, boolean>) : undefined;
+
+    return { defaultCityId, displaySettings };
+  } catch {
+    return { defaultCityId: null, displaySettings: undefined };
+  }
+}
+
 /**
  * Показать прогноз на N дней
  */
@@ -45,6 +66,8 @@ async function showForecast(
     const telegramId = userId.toString();
     const user = await getOrCreateUser(telegramId, ctx.from?.language_code);
 
+    const userSettings = await getUserSettingsForFormattingSafe(telegramId);
+
     // Получаем все локации пользователя
     const locations = await prisma.location.findMany({
       where: { userId: user.id },
@@ -59,6 +82,12 @@ async function showForecast(
 
     // Определяем целевую локацию
     let targetLocation = locations[0];
+
+    if (!locationId && userSettings.defaultCityId) {
+      const foundDefault = locations.find((loc) => loc.id === userSettings.defaultCityId);
+      if (foundDefault) targetLocation = foundDefault;
+    }
+
     if (locationId) {
       const found = locations.find((loc) => loc.id === locationId);
       if (found) {
@@ -111,7 +140,8 @@ async function showForecast(
         targetLocation.name,
         'RU', // TODO: получать из БД
         false, // В кратком формате без рекомендаций
-        false // Без предупреждений
+        false, // Без предупреждений
+        userSettings.displaySettings
       );
 
       // Создаем клавиатуру для каждого дня
@@ -260,6 +290,8 @@ async function showDetailedForecast(
     const telegramId = userId.toString();
     const user = await getOrCreateUser(telegramId, ctx.from?.language_code);
 
+    const userSettings = await getUserSettingsForFormattingSafe(telegramId);
+
     // Получаем улучшенный детальный прогноз
     const detailedForecastResult = await getDetailedDailyForecast(
       {
@@ -292,7 +324,8 @@ async function showDetailedForecast(
       'RU', // TODO: получать из БД
       'Europe/Moscow', // TODO: получать из БД
       true, // includeRecommendations
-      true // includeWarnings
+      true, // includeWarnings
+      userSettings.displaySettings
     );
 
     // Добавляем информацию об источнике данных, если не из кэша
@@ -418,11 +451,13 @@ async function showHourlyForecast(
       : DateTime.fromISO(dateStr).toFormat('dd.MM.yyyy');
 
     // Форматируем улучшенный почасовой прогноз
+    const userSettings = await getUserSettingsForFormattingSafe(userId.toString());
     let message = formatHourlyForecast(
       hourlyResult.data,
       location.name,
       displayDate,
-      false // compact = false для полного формата
+      false, // compact = false для полного формата
+      userSettings.displaySettings
     );
 
     // Добавляем информацию об источнике данных, если не из кэша

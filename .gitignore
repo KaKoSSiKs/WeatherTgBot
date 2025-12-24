@@ -20,6 +20,6 @@ pnpm-debug.log*
 .DS_Store
 
 # Prisma
-bot/prisma/*.db
-bot/prisma/*.db-journal
+bot/prisma/bot/prisma/*.db
+bot/prisma/bot/prisma/*.db-journal
 *.db

@@ -22,6 +22,45 @@ export interface WeatherData {
   warning?: string;
 }
 
+export type DisplaySettings = {
+  temperature: boolean;
+  feelsLike: boolean;
+  humidity: boolean;
+  pressure: boolean;
+  visibility: boolean;
+  wind: boolean;
+  precipitation: boolean;
+  sunriseSunset: boolean;
+  recommendations: boolean;
+  warnings: boolean;
+  timePeriods: boolean;
+  hourlyDetails: boolean;
+};
+
+function getDefaultDisplaySettings(): DisplaySettings {
+  return {
+    temperature: true,
+    feelsLike: true,
+    humidity: true,
+    pressure: true,
+    visibility: true,
+    wind: true,
+    precipitation: true,
+    sunriseSunset: true,
+    recommendations: true,
+    warnings: true,
+    timePeriods: true,
+    hourlyDetails: false
+  };
+}
+
+function normalizeDisplaySettings(settings?: Partial<DisplaySettings>): DisplaySettings {
+  return {
+    ...getDefaultDisplaySettings(),
+    ...(settings ?? {})
+  };
+}
+
 /**
  * Словарь эмодзи для погодных условий
  */
@@ -146,9 +185,12 @@ export function formatCurrentWeather(
   countryCode: string = 'RU',
   timezone: string = 'Europe/Moscow',
   includeRecommendations: boolean = true,
-  includeWarnings: boolean = true
+  includeWarnings: boolean = true,
+  displaySettings?: Partial<DisplaySettings>
 ): string {
   try {
+    const ds = normalizeDisplaySettings(displaySettings);
+
     // Получаем текущее время в часовом поясе города
     const tz = timezone || 'Europe/Moscow';
     const currentTime = DateTime.now().setZone(tz);
@@ -198,22 +240,29 @@ export function formatCurrentWeather(
     // Формируем сообщение
     let message = `🌍 ${cityName}, ${countryCode} | ${timeStr}\n\n`;
     message += `${conditionEmoji} ${condition}\n\n`;
-    message += `🌡 Температура: ${temp.toFixed(1)}°C\n`;
-    message += `🤚 Ощущается как: ${feelsLike.toFixed(1)}°C\n`;
-    message += `💧 Влажность: ${humidity}%\n`;
-    message += `📊 Давление: ${pressure} гПа\n`;
-    message += `👁 Видимость: ${visibility.toFixed(1)} км\n`;
-    message += `💨 Ветер: ${windSpeed.toFixed(1)} м/с, ${windDirection}\n\n`;
-    message += `🌅 Восход: ${sunriseTime}\n`;
-    message += `🌇 Закат: ${sunsetTime}`;
+
+    if (ds.temperature) message += `🌡 Температура: ${temp.toFixed(1)}°C\n`;
+    if (ds.feelsLike) message += `🤚 Ощущается как: ${feelsLike.toFixed(1)}°C\n`;
+    if (ds.humidity) message += `💧 Влажность: ${humidity}%\n`;
+    if (ds.pressure) message += `📊 Давление: ${pressure} гПа\n`;
+    if (ds.visibility) message += `👁 Видимость: ${visibility.toFixed(1)} км\n`;
+    if (ds.wind) message += `💨 Ветер: ${windSpeed.toFixed(1)} м/с, ${windDirection}\n`;
+
+    if (ds.sunriseSunset) {
+      message += '\n';
+      message += `🌅 Восход: ${sunriseTime}\n`;
+      message += `🌇 Закат: ${sunsetTime}`;
+    } else {
+      message = message.trimEnd();
+    }
     
     // Добавляем рекомендации, если нужно
-    if (includeRecommendations && recommendation) {
+    if (includeRecommendations && ds.recommendations && recommendation) {
       message += `\n\n💡 Рекомендации:\n${recommendation}`;
     }
     
     // Добавляем предупреждения, если нужно
-    if (includeWarnings && warning) {
+    if (includeWarnings && ds.warnings && warning) {
       message += `\n\n⚠️ Предупреждение МЧС: ${warning}`;
     }
     
@@ -253,9 +302,12 @@ export function formatDailyForecast(
   cityName: string,
   countryCode: string = 'RU',
   includeRecommendations: boolean = true,
-  includeWarnings: boolean = true
+  includeWarnings: boolean = true,
+  displaySettings?: Partial<DisplaySettings>
 ): string {
   try {
+    const ds = normalizeDisplaySettings(displaySettings);
+
     const dateStr = forecastData.dateStr || '';
     const condition = forecastData.condition || 'Неизвестно';
     const conditionEmoji = getWeatherEmoji(condition);
@@ -273,20 +325,22 @@ export function formatDailyForecast(
     
     let message = `🌍 ${cityName}, ${countryCode} | Прогноз на ${dateStr}\n\n`;
     message += `${conditionEmoji} ${condition}\n`;
-    message += `🌡 Температура: ${temp.toFixed(1)}°C\n`;
-    message += `🤚 Ощущается как: ${feelsLike.toFixed(1)}°C\n`;
-    message += `💧 Влажность: ${humidity}%\n`;
-    message += `💨 Ветер: ${windSpeed.toFixed(1)} м/с, ${windDirection}`;
+
+    if (ds.temperature) message += `🌡 Температура: ${temp.toFixed(1)}°C\n`;
+    if (ds.feelsLike) message += `🤚 Ощущается как: ${feelsLike.toFixed(1)}°C\n`;
+    if (ds.humidity) message += `💧 Влажность: ${humidity}%\n`;
+    if (ds.wind) message += `💨 Ветер: ${windSpeed.toFixed(1)} м/с, ${windDirection}`;
+    else message = message.trimEnd();
     
     // Добавляем рекомендации, если нужно
-    if (includeRecommendations) {
+    if (includeRecommendations && ds.recommendations) {
       const recommendation = getTemperatureRecommendation(temp, temp);
       message += `\n\n💡 Рекомендации:\n${recommendation}`;
     }
     
     // Добавляем предупреждения, если есть
     const warning = forecastData.warning || '';
-    if (includeWarnings && warning) {
+    if (includeWarnings && ds.warnings && warning) {
       message += `\n\n⚠️ ${warning}`;
     }
     
@@ -305,9 +359,12 @@ export function formatDetailedForecast(
   countryCode: string = 'RU',
   timezone: string = 'Europe/Moscow',
   includeRecommendations: boolean = true,
-  includeWarnings: boolean = true
+  includeWarnings: boolean = true,
+  displaySettings?: Partial<DisplaySettings>
 ): string {
   try {
+    const ds = normalizeDisplaySettings(displaySettings);
+
     const dateStr = forecastData.dateStr || '';
     const condition = forecastData.condition || 'Неизвестно';
     const conditionEmoji = getWeatherEmoji(condition);
@@ -385,25 +442,36 @@ export function formatDetailedForecast(
     // Формируем сообщение по точному ТЗ
     let message = `🌍 ${cityName}, ${countryCode} | Прогноз на ${dateStr}\n\n`;
     message += `${conditionEmoji} ${condition}\n\n`;
-    message += `🌡 Температура: ${temp.toFixed(1)}°C\n`;
-    message += `🤚 Ощущается как: ${feelsLike.toFixed(1)}°C\n`;
-    message += `💧 Влажность: ${humidity}%\n`;
-    message += `📊 Давление: ${pressure} гПа\n`;
-    message += `👁 Видимость: ${visibility.toFixed(1)} км\n`;
-    message += `💨 Ветер: ${windSpeed.toFixed(1)} м/с, ${windDirection}\n\n`;
-    message += `${periodText}\n\n`;
-    message += `🌅 Восход: ${sunriseTime}\n`;
-    message += `🌇 Закат: ${sunsetTime}`;
+
+    if (ds.temperature) message += `🌡 Температура: ${temp.toFixed(1)}°C\n`;
+    if (ds.feelsLike) message += `🤚 Ощущается как: ${feelsLike.toFixed(1)}°C\n`;
+    if (ds.humidity) message += `💧 Влажность: ${humidity}%\n`;
+    if (ds.pressure) message += `📊 Давление: ${pressure} гПа\n`;
+    if (ds.visibility) message += `👁 Видимость: ${visibility.toFixed(1)} км\n`;
+    if (ds.wind) message += `💨 Ветер: ${windSpeed.toFixed(1)} м/с, ${windDirection}`;
+
+    if (ds.timePeriods) {
+      message += `\n\n${periodText}\n\n`;
+    } else {
+      message += '\n\n';
+    }
+
+    if (ds.sunriseSunset) {
+      message += `🌅 Восход: ${sunriseTime}\n`;
+      message += `🌇 Закат: ${sunsetTime}`;
+    } else {
+      message = message.trimEnd();
+    }
     
     // Добавляем рекомендации (используем расширенные, если есть)
-    if (includeRecommendations) {
+    if (includeRecommendations && ds.recommendations) {
       const recommendation = forecastData.detailedRecommendation || getTemperatureRecommendation(temp, feelsLike);
       message += `\n\n💡 Рекомендации:\n${recommendation}`;
     }
     
     // Добавляем предупреждения
     const warning = forecastData.warning || '';
-    if (includeWarnings) {
+    if (includeWarnings && ds.warnings) {
       if (warning && warning !== 'Предупреждений МЧС нет.') {
         message += `\n\n⚠️ ${warning}`;
       } else {
@@ -424,9 +492,12 @@ export function formatDailyForecastBrief(
   forecasts: DailyForecastData[],
   cityName: string,
   days: number,
-  countryCode: string = 'RU'
+  countryCode: string = 'RU',
+  displaySettings?: Partial<DisplaySettings>
 ): string {
   try {
+    const ds = normalizeDisplaySettings(displaySettings);
+
     if (!forecasts || forecasts.length === 0) {
       return `📅 Нет данных прогноза для ${cityName}`;
     }
@@ -447,8 +518,12 @@ export function formatDailyForecastBrief(
       // Форматируем строку для дня
       message += `📅 ${dateStr}\n`;
       message += `${conditionEmoji} ${condition}\n`;
-      message += `🌡️ ${tempMin.toFixed(0)}°...${tempMax.toFixed(0)}°C`;
-      message += ` | 💨 ${windSpeed.toFixed(1)} м/с\n\n`;
+
+      const parts: string[] = [];
+      if (ds.temperature) parts.push(`🌡️ ${tempMin.toFixed(0)}°...${tempMax.toFixed(0)}°C`);
+      if (ds.wind) parts.push(`💨 ${windSpeed.toFixed(1)} м/с`);
+      message += parts.join(' | ');
+      message += `\n\n`;
     }
 
     return message.trim();
@@ -486,9 +561,12 @@ export function formatHourlyForecast(
   hourlyData: HourlyForecastData[],
   cityName: string,
   dateStr: string,
-  compact: boolean = false
+  compact: boolean = false,
+  displaySettings?: Partial<DisplaySettings>
 ): string {
   try {
+    const ds = normalizeDisplaySettings(displaySettings);
+
     if (!hourlyData || hourlyData.length === 0) {
       return `⏱️ Нет данных почасового прогноза для ${cityName} на ${dateStr}`;
     }
@@ -517,10 +595,14 @@ export function formatHourlyForecast(
           timeEmoji = '🌙';
         }
         
-        if (compact) {
+        const actualCompact = compact || !ds.hourlyDetails;
+        if (actualCompact) {
           message += `${timeStr} ${timeEmoji} ${temp.toFixed(1)}°C\n`;
         } else {
-          message += `${timeStr} ${timeEmoji} ${temp.toFixed(1)}°C, 💨 ${windSpeed.toFixed(1)} м/с\n`;
+          const parts: string[] = [`${timeStr} ${timeEmoji}`];
+          if (ds.temperature) parts.push(`${temp.toFixed(1)}°C`);
+          if (ds.wind) parts.push(`💨 ${windSpeed.toFixed(1)} м/с`);
+          message += `${parts.join(' ')}\n`;
         }
       }
     } else {
@@ -543,7 +625,10 @@ export function formatHourlyForecast(
           timeEmoji = '🌙';
         }
         
-        message += `${timeStr} ${timeEmoji} ${temp.toFixed(1)}°C, 💨 ${windSpeed.toFixed(1)} м/с\n`;
+        const parts: string[] = [`${timeStr} ${timeEmoji}`];
+        if (ds.temperature) parts.push(`${temp.toFixed(1)}°C`);
+        if (ds.wind) parts.push(`💨 ${windSpeed.toFixed(1)} м/с`);
+        message += `${parts.join(' ')}\n`;
       }
       
       // Добавляем сводку, если есть 24 часа данных

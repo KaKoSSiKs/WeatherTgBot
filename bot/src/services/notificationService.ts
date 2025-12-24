@@ -21,6 +21,24 @@ import {
 import { notificationSentKeyboard } from '../keyboards/notifications';
 import { DateTime } from 'luxon';
 
+function parseTimeToMinutes(value: string): number | null {
+  const m = value.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+  return hh * 60 + mm;
+}
+
+function isWithinSilentWindow(nowMinutes: number, startMinutes: number, endMinutes: number): boolean {
+  // Если период не пересекает полночь
+  if (startMinutes <= endMinutes) {
+    return nowMinutes >= startMinutes && nowMinutes < endMinutes;
+  }
+  // Пересекает полночь
+  return nowMinutes >= startMinutes || nowMinutes < endMinutes;
+}
+
 // Типы параметров уведомлений
 export interface RegularForecastParams {
   time: string; // "HH:mm"
@@ -774,6 +792,37 @@ export class NotificationService {
 
       for (const notification of notifications) {
         try {
+          // Проверка часов тишины по настройкам пользователя
+          if (notification.user?.telegramId) {
+            try {
+              const prismaAny = prisma as any;
+              const user = await prismaAny.user.findUnique({
+                where: { telegramId: notification.user.telegramId },
+                include: { settings: true }
+              });
+
+              const settings = user?.settings as any;
+              const silentModeEnabled = Boolean(settings?.silentModeEnabled);
+              if (silentModeEnabled) {
+                const start = typeof settings?.silentModeStart === 'string' ? settings.silentModeStart : '23:00';
+                const end = typeof settings?.silentModeEnd === 'string' ? settings.silentModeEnd : '07:00';
+                const startMin = parseTimeToMinutes(start);
+                const endMin = parseTimeToMinutes(end);
+
+                if (startMin !== null && endMin !== null) {
+                  const nowMin = DateTime.now().setZone(this.timezone).hour * 60 + DateTime.now().setZone(this.timezone).minute;
+                  if (isWithinSilentWindow(nowMin, startMin, endMin)) {
+                    // Не отправляем, но обновляем nextNotification
+                    await this.updateNextNotification(notification.id);
+                    continue;
+                  }
+                }
+              }
+            } catch {
+              // ignore silent hours failures
+            }
+          }
+
           if (notification.subscriptionType === 'regular_forecast') {
             await this.sendRegularForecast(notification);
           } else {

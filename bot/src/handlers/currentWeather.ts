@@ -26,6 +26,36 @@ import {
 } from '../services/weatherService';
 import { DEFAULT_CITY } from '../utils/geocoding';
 
+async function getUserDisplaySettingsSafe(telegramId: string): Promise<Record<string, boolean> | undefined> {
+  const prismaAny = prisma as any;
+  try {
+    const user = await prismaAny.user?.findUnique?.({
+      where: { telegramId },
+      include: { settings: true }
+    });
+
+    const raw = user?.settings?.displaySettings;
+    if (!raw) return undefined;
+    return JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+}
+
+async function getUserDefaultCityIdSafe(telegramId: string): Promise<number | null> {
+  const prismaAny = prisma as any;
+  try {
+    const user = await prismaAny.user?.findUnique?.({
+      where: { telegramId },
+      include: { settings: true }
+    });
+    const id = user?.settings?.defaultCityId;
+    return typeof id === 'number' ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Показать текущую погоду
  */
@@ -55,6 +85,18 @@ async function showCurrentWeather(
 
     // Определяем целевую локацию
     let targetLocation = locations[0];
+
+    // Если локация не указана явно — пробуем взять основную из настроек
+    if (!locationId) {
+      const defaultCityId = await getUserDefaultCityIdSafe(telegramId);
+      if (defaultCityId) {
+        const foundDefault = locations.find((loc) => loc.id === defaultCityId);
+        if (foundDefault) {
+          targetLocation = foundDefault;
+        }
+      }
+    }
+
     if (locationId) {
       const found = locations.find((loc) => loc.id === locationId);
       if (found) {
@@ -88,13 +130,15 @@ async function showCurrentWeather(
     }
 
     // Форматируем сообщение
+    const displaySettings = await getUserDisplaySettingsSafe(telegramId);
     const message = formatCurrentWeather(
       result.data,
       targetLocation.name,
       'RU', // TODO: получать из БД
       'Europe/Moscow', // TODO: получать из БД
       true, // includeRecommendations
-      true // includeWarnings
+      true, // includeWarnings
+      displaySettings
     );
 
     // Создаем клавиатуру
