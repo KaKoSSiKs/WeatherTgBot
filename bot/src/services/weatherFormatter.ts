@@ -282,6 +282,10 @@ export function formatWeatherError(cityName: string, errorType: string = 'api_er
     return `Город '${cityName}' не найден.\nПроверьте правильность написания.`;
   } else if (errorType === 'no_cities') {
     return 'У вас нет сохраненных городов.\n\nДобавьте город, чтобы получать погоду:';
+  } else if (errorType === 'invalid_api_key') {
+    return '⚠️ Ошибка конфигурации сервиса погоды.\n\nПожалуйста, обратитесь к администратору бота.';
+  } else if (errorType === 'network_error') {
+    return '⚠️ Проблемы с подключением к сервису погоды.\nПожалуйста, попробуйте позже.';
   } else if (errorType === 'api_error') {
     return '⚠️ Сервис погоды временно недоступен.\nПожалуйста, попробуйте позже.';
   } else {

@@ -96,8 +96,9 @@ export async function getCurrentWeatherByCoords(
   logger(`[WeatherService] cache miss for ${cacheKey}`);
   
   try {
-    // Пытаемся получить данные от OpenWeatherMap
-    const response = await axios.get('https://api.openweathermap.org/data/2.5/weather', {
+    // Используем API 2.5 (бесплатная версия)
+    // Используем HTTP вместо HTTPS, так как для бесплатной подписки рекомендуется HTTP
+    const response = await axios.get('http://api.openweathermap.org/data/2.5/weather', {
       params: {
         lat: coords.latitude,
         lon: coords.longitude,
@@ -128,7 +129,16 @@ export async function getCurrentWeatherByCoords(
         return { data: null, source: 'api_error', error: 'city_not_found' };
       }
       if (axiosError.response?.status === 401) {
+        logger('⚠️ API key error (401). Possible reasons:');
+        logger('   1. Invalid or incorrect API key');
+        logger('   2. API key not activated yet (can take up to 2 hours)');
+        logger('   3. API key blocked due to exceeding limits');
+        logger('   Check your API key at: https://home.openweathermap.org/api_keys');
         return { data: null, source: 'api_error', error: 'invalid_api_key' };
+      }
+      if (axiosError.response?.status === 429) {
+        logger('⚠️ API rate limit exceeded. Please wait 10 minutes before next request.');
+        return { data: null, source: 'api_error', error: 'rate_limit' };
       }
     }
     
@@ -215,6 +225,7 @@ function parseOpenWeatherResponse(data: any): WeatherData {
     warning: undefined
   };
 }
+
 
 /**
  * Получить ежедневный прогноз на N дней
@@ -326,7 +337,9 @@ async function fetchDailyForecastOpenWeather(
   days: number
 ): Promise<DailyForecastData[] | null> {
   try {
-    const response = await axios.get('https://api.openweathermap.org/data/2.5/forecast', {
+    // Используем API 2.5 (бесплатная версия)
+    // Используем HTTP вместо HTTPS, так как для бесплатной подписки рекомендуется HTTP
+    const response = await axios.get('http://api.openweathermap.org/data/2.5/forecast', {
       params: {
         lat: coords.latitude,
         lon: coords.longitude,
@@ -345,6 +358,13 @@ async function fetchDailyForecastOpenWeather(
     return null;
   } catch (error) {
     logger('[WeatherService] error fetching OpenWeatherMap forecast:', error);
+    if (axios.isAxiosError(error)) {
+      if (error.response?.status === 401) {
+        logger('⚠️ API key error (401) in forecast request');
+      } else if (error.response?.status === 429) {
+        logger('⚠️ API rate limit exceeded in forecast request');
+      }
+    }
     return null;
   }
 }

@@ -130,7 +130,8 @@ class OpenWeatherProvider extends BaseWeatherProvider {
     const result = await this.executeWithRetry(
       async () => {
         const started = performance.now();
-        const { data } = await axios.get('https://api.openweathermap.org/data/2.5/weather', {
+        // Используем HTTP вместо HTTPS для бесплатной подписки
+        const { data } = await axios.get('http://api.openweathermap.org/data/2.5/weather', {
           params: {
             lat: coords.latitude,
             lon: coords.longitude,
