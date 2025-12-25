@@ -1,32 +1,123 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Header } from './components/Header';
+import { Footer } from './components/Footer';
+import { TabNav } from './components/TabNav';
+import { LocationsPage } from './pages/LocationsPage';
+import { ForecastPage } from './pages/ForecastPage';
+import { NotificationsPage } from './pages/NotificationsPage';
+import { SettingsPage } from './pages/SettingsPage';
+import { loadInitData } from './services/telegram';
+import {
+  addLocation,
+  deleteLocation,
+  fetchForecast,
+  fetchLocations,
+  fetchNotifications,
+  saveNotification,
+  toggleNotification,
+} from './services/api';
+import { Location, Notification, Settings } from './types';
+
+type Route = 'locations' | 'forecast' | 'notifications' | 'settings';
+
+const defaultSettings: Settings = { units: 'metric', locale: 'ru', cityCount: 5 };
 
 export function App() {
+  const [route, setRoute] = useState<Route>('locations');
+  const [initData, setInitData] = useState<string | null>(null);
+  const [locations, setLocations] = useState<Location[]>([]);
+  const [selected, setSelected] = useState<Location | null>(null);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [settings, setSettings] = useState<Settings>(defaultSettings);
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    const init = loadInitData();
+    setInitData(init);
+    (async () => {
+      const locs = await fetchLocations();
+      setLocations(locs);
+      setSelected(locs[0] ?? null);
+      const nots = await fetchNotifications();
+      setNotifications(nots);
+    })();
+  }, []);
+
+  const currentForecast = useMemo(() => selected, [selected]);
+
+  const handleAddLocation = async (loc: Omit<Location, 'id'>) => {
+    const updated = await addLocation(loc);
+    setLocations(updated);
+    setSelected(updated[0] ?? null);
+  };
+
+  const handleDeleteLocation = async (id: string) => {
+    const updated = await deleteLocation(id);
+    setLocations(updated);
+    if (selected?.id === id) setSelected(updated[0] ?? null);
+  };
+
+  const handleSaveNotification = async (notif: Notification) => {
+    const updated = await saveNotification(notif);
+    setNotifications(updated);
+  };
+
+  const handleToggleNotification = async (id: string, enabled: boolean) => {
+    const updated = await toggleNotification(id, enabled);
+    setNotifications(updated);
+  };
+
   return (
-    <div style={{ maxWidth: 480, margin: '0 auto', padding: 16, fontFamily: 'system-ui, sans-serif' }}>
-      <h2>Добро пожаловать! Настройте уведомления о погоде под себя.</h2>
+    <div className="min-h-screen bg-slate-50 text-slate-900">
+      <div className="max-w-4xl mx-auto px-4 pb-16 md:pb-8">
+        <Header initData={!!initData} onOpenBot={() => window.open('https://t.me/your_bot?start=miniapp', '_blank')} />
+        <TabNav route={route} onChange={setRoute} />
 
-      <section style={{ border: '1px solid #eee', borderRadius: 12, padding: 16, marginBottom: 16 }}>
-        <h3>Текущая погода</h3>
-        <div>📍 Москва</div>
-        <div>☀️ +15°C</div>
-        <div>Ясно, ощущается как +14°C</div>
-        <div>🧥 Легкая куртка или худи. Идеально для прогулок!</div>
-      </section>
+        <div className="mt-4">
+          {route === 'locations' && (
+            <LocationsPage
+              locations={locations}
+              onAdd={handleAddLocation}
+              onDelete={handleDeleteLocation}
+              onSelect={(loc) => {
+                setSelected(loc);
+                setRoute('forecast');
+              }}
+            />
+          )}
 
-      <section style={{ border: '1px solid #eee', borderRadius: 12, padding: 16, marginBottom: 16 }}>
-        <h3>Активные уведомления</h3>
-        <ul style={{ margin: 0, paddingLeft: 18 }}>
-          <li>⏰ Ежедневно в 07:30 (Москва)</li>
-          <li>❄️ Уведомление о заморозках (Включено)</li>
-        </ul>
-        <div style={{ color: '#777', marginTop: 8 }}>
-          У вас пока нет активных уведомлений. Нажмите «Добавить», чтобы создать первое!
+          {route === 'forecast' && (
+            <ForecastPage
+              location={selected}
+              fetchForecast={(loc) => {
+                setIsLoading(true);
+                return fetchForecast(loc).finally(() => setIsLoading(false));
+              }}
+              isLoading={isLoading}
+              onCreateAlert={() => setRoute('notifications')}
+            />
+          )}
+
+          {route === 'notifications' && (
+            <NotificationsPage
+              locations={locations}
+              notifications={notifications}
+              onSave={handleSaveNotification}
+              onToggle={handleToggleNotification}
+              onBackToForecast={() => setRoute('forecast')}
+            />
+          )}
+
+          {route === 'settings' && (
+            <SettingsPage
+              settings={settings}
+              onChange={(next) => setSettings(next)}
+              onLocaleChange={(locale) => setSettings({ ...settings, locale })}
+            />
+          )}
         </div>
-      </section>
 
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button style={{ flex: 1, padding: 12, background: '#2b7cff', color: '#fff', border: 0, borderRadius: 10 }}>➕ Добавить уведомление</button>
-        <button style={{ padding: 12, border: '1px solid #ddd', background: '#fff', borderRadius: 10 }}>⚙️ Настройки</button>
+        <Footer />
       </div>
     </div>
   );

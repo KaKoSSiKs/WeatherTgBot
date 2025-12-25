@@ -1,0 +1,23 @@
+# Docker Compose Override для Development
+# 
+# Скопируйте этот файл в docker-compose.override.yml для настройки dev-режима
+# docker-compose.override.yml автоматически применяется при запуске docker compose up
+
+services:
+  backend:
+    # В development используем исходный код с hot-reload
+    build:
+      target: builder  # Используем builder stage для dev зависимостей
+    environment:
+      NODE_ENV: development
+    volumes:
+      # Монтируем исходный код для hot-reload
+      - ../../packages/backend/src:/app/packages/backend/src
+      - ../../packages/backend/prisma:/app/packages/backend/prisma
+      - ../../packages/backend/package.json:/app/packages/backend/package.json
+      - ../../packages/backend/tsconfig.json:/app/packages/backend/tsconfig.json
+      # НЕ монтируем node_modules - используем из контейнера
+    # В dev режиме используем ts-node-dev для hot-reload
+    # Entrypoint все равно применит миграции
+    command: pnpm dev
+

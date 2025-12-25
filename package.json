@@ -4,10 +4,21 @@
   "packageManager": "pnpm@9.0.0",
   "workspaces": [
     "bot",
-    "apps/*"
+    "apps/*",
+    "packages/*"
   ],
   "scripts": {
     "prepare": "echo workspace ready",
-    "dev": "pnpm -r dev"
+    "prisma:generate": "pnpm -F bot prisma:generate",
+    "prisma:migrate": "pnpm -F bot prisma:migrate",
+    "dev": "pnpm -r dev",
+    "dev:bot": "pnpm -F bot dev",
+    "dev:frontend": "pnpm -F miniapp dev",
+    "dev:all": "pnpm -r --parallel dev",
+    "build": "pnpm -r build",
+    "build:bot": "pnpm -F bot build",
+    "build:frontend": "pnpm -F miniapp build",
+    "start:bot": "pnpm -F bot start",
+    "start:frontend": "pnpm -F miniapp preview"
   }
 }

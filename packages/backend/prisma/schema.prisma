@@ -1,0 +1,143 @@
+// Prisma Schema для Weather Telegram Bot + Mini App
+// PostgreSQL database schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum NotificationType {
+  REGULAR_FORECAST  // Регулярные прогнозы погоды
+  WEATHER_EVENT     // События по погодным условиям
+}
+
+enum ScheduleType {
+  DAILY     // Ежедневно
+  WEEKDAYS  // Только будни (пн-пт)
+  WEEKENDS  // Только выходные (сб-вс)
+  ONCE      // Один раз
+}
+
+enum TemperatureUnit {
+  CELSIUS    // Цельсий (°C)
+  FAHRENHEIT // Фаренгейт (°F)
+}
+
+enum WindSpeedUnit {
+  MPS  // Метры в секунду (м/с)
+  KMH  // Километры в час (км/ч)
+  MPH  // Мили в час (миль/ч)
+}
+
+enum PressureUnit {
+  HPA   // Гектопаскали (гПа)
+  MMHG  // Миллиметры ртутного столба (мм рт. ст.)
+}
+
+// ============================================================================
+// MODELS
+// ============================================================================
+
+/// Пользователь приложения
+/// Идентифицируется по telegram_id
+model User {
+  id            Int            @id @default(autoincrement())
+  telegramId    String         @unique @db.VarChar(50)
+  languageCode  String?        @db.VarChar(10) // ru, en, etc.
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  // Relations
+  locations     Location[]
+  notifications Notification[]
+  settings      UserSettings?
+
+  @@index([telegramId])
+  @@map("users")
+}
+
+/// Локация пользователя (город, место)
+/// Пользователь может иметь несколько локаций
+/// Дефолтная локация определяется через UserSettings.defaultLocationId (Single Source of Truth)
+model Location {
+  id            Int            @id @default(autoincrement())
+  userId        Int
+  name          String         @db.VarChar(200)
+  latitude      Float          @db.DoublePrecision
+  longitude     Float          @db.DoublePrecision
+  countryCode   String?        @db.VarChar(2) // ISO 3166-1 alpha-2 (RU, US, etc.)
+  displayOrder  Int            @default(0) // Порядок отображения
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  // Relations
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  notifications Notification[]
+  defaultForSettings UserSettings[] @relation("DefaultLocation")
+
+  @@index([userId])
+  @@map("locations")
+}
+
+/// Уведомление о погоде
+/// Может быть регулярным прогнозом или событием по условиям
+model Notification {
+  id                Int             @id @default(autoincrement())
+  userId            Int
+  locationId        Int?            // Опционально: если null, используется дефолтная локация
+  type              NotificationType @default(REGULAR_FORECAST)
+  subtype           String          @db.VarChar(50) // current, today, temperature_change, etc.
+  schedule          ScheduleType    @default(DAILY)
+  parameters        Json            @default("{}") // Гибкие параметры в JSON
+  customName        String?         @db.VarChar(200) // Пользовательское название
+  enabled           Boolean         @default(true)
+  pausedUntil       DateTime?       // Приостановлено до указанной даты
+  nextNotificationAt DateTime?      // Время следующего уведомления
+  lastCheckedAt     DateTime?       // Время последней проверки условий
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  // Relations
+  user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  location          Location?       @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([userId, enabled])
+  @@index([nextNotificationAt])
+  @@index([enabled, nextNotificationAt])
+  @@map("notifications")
+}
+
+/// Настройки пользователя
+/// Один набор настроек на пользователя (1:1)
+model UserSettings {
+  id                  Int             @id @default(autoincrement())
+  userId              Int             @unique
+  defaultLocationId   Int?            // Локация по умолчанию
+  temperatureUnit     TemperatureUnit @default(CELSIUS)
+  windSpeedUnit       WindSpeedUnit   @default(MPS)
+  pressureUnit        PressureUnit    @default(HPA)
+  displaySettings     Json            @default("{}") // Настройки отображения (какие поля показывать)
+  notificationPrefix  String          @default("sunny") @db.VarChar(50) // Префикс для уведомлений
+  silentModeEnabled   Boolean         @default(false)
+  silentModeStart     String          @default("23:00") @db.VarChar(5) // HH:mm
+  silentModeEnd       String          @default("07:00") @db.VarChar(5) // HH:mm
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  // Relations
+  user                User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  defaultLocation     Location?       @relation("DefaultLocation", fields: [defaultLocationId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@map("user_settings")
+}
+
