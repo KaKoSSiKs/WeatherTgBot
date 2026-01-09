@@ -19,9 +19,14 @@ router.get('/', async (req: Request, res: Response) => {
     const userId = req.user!.userId;
     const settings = await settingsRepo.findByUserId(userId);
     
+    // Получаем languageCode из User, так как в UserSettings нет поля language
+    const { UserRepository } = await import('../../storage/prisma/repositories');
+    const userRepo = new UserRepository();
+    const user = await userRepo.findById(userId);
+    
     res.json({
       units: settings?.temperatureUnit?.toLowerCase() || 'metric',
-      locale: settings?.language || 'ru',
+      locale: user?.languageCode || 'ru',
       cityCount: 5 // TODO: добавить в настройки
     });
   } catch (error) {
@@ -42,15 +47,23 @@ router.put('/', async (req: Request, res: Response) => {
     
     if (settings) {
       await settingsRepo.update(settings.id, {
-        temperatureUnit: units === 'imperial' ? 'FAHRENHEIT' : 'CELSIUS',
-        language: locale || 'ru'
+        temperatureUnit: units === 'imperial' ? 'FAHRENHEIT' : 'CELSIUS'
       });
     } else {
       await settingsRepo.create({
         user: { connect: { id: userId } },
-        temperatureUnit: units === 'imperial' ? 'FAHRENHEIT' : 'CELSIUS',
-        language: locale || 'ru'
+        temperatureUnit: units === 'imperial' ? 'FAHRENHEIT' : 'CELSIUS'
       });
+    }
+    
+    // Обновляем languageCode в User, если нужно
+    if (locale) {
+      const { UserRepository } = await import('../../storage/prisma/repositories');
+      const userRepo = new UserRepository();
+      const user = await userRepo.findById(userId);
+      if (user) {
+        await userRepo.updateById(userId, { languageCode: locale });
+      }
     }
     
     res.json({

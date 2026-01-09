@@ -46,9 +46,7 @@ router.get('/current', async (req: Request, res: Response) => {
         wind: result.weather.windSpeed,
         humidity: result.weather.humidity,
         pressure: result.weather.pressure,
-        uvi: result.weather.uvIndex || 0,
-        sunrise: result.weather.sunrise ? new Date(result.weather.sunrise).toTimeString().slice(0, 5) : undefined,
-        sunset: result.weather.sunset ? new Date(result.weather.sunset).toTimeString().slice(0, 5) : undefined
+        uvi: result.weather.uvIndex || 0
       }
     });
   } catch (error) {
@@ -77,12 +75,12 @@ router.get('/forecast', async (req: Request, res: Response) => {
       wind: h.windSpeed
     })) || [];
     
-    const daysForecast = result.forecast.daily?.map((d, idx) => ({
+    const daysForecast = result.forecast.daily?.map((d) => ({
       date: d.date.toISOString().slice(0, 10),
-      min: d.temperatureMin,
-      max: d.temperatureMax,
+      min: d.temperature.min,
+      max: d.temperature.max,
       icon: getWeatherIcon(d.condition),
-      rainChance: d.precipitationChance || 0
+      rainChance: d.precipitation ? Math.round(d.precipitation.probability * 100) : 0
     })) || [];
     
     res.json({

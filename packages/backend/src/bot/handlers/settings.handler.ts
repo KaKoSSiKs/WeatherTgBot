@@ -61,7 +61,7 @@ export async function handleSettingsCallback(ctx: Context): Promise<void> {
           const text = `⚙️ Настройки\n\n` +
             `📍 Локации: ${locations.length}\n` +
             `🌡️ Единицы: ${settings?.temperatureUnit === 'FAHRENHEIT' ? 'Фаренгейт' : 'Цельсий'}\n` +
-            `🌐 Язык: ${settings?.language || 'ru'}\n\n` +
+            `🌐 Язык: ${user.languageCode || 'ru'}\n\n` +
             `Выберите раздел:`;
           
           const keyboard = Markup.inlineKeyboard([
@@ -94,7 +94,7 @@ export async function handleSettingsCallback(ctx: Context): Promise<void> {
             await ctx.editMessageText(text, getCitySelectionKeyboard(locations, 'settings'));
           }
         } else if (parsed.action === 'add') {
-          const text = '📍 Добавление города\n\nОтправьте название города или поделитесь геолокацией.\n\nПопулярные города:';
+          const text = '📍 Добавление города\n\nОтправьте название города или поделитесь геолокацией (📍 кнопка внизу).\n\nПопулярные города:';
           const keyboard = Markup.inlineKeyboard([
             [
               Markup.button.callback('📍 Москва', SettingsCallback.create('cities', 'quick_add', 'Москва')),
@@ -105,22 +105,28 @@ export async function handleSettingsCallback(ctx: Context): Promise<void> {
               Markup.button.callback('📍 Нью-Йорк', SettingsCallback.create('cities', 'quick_add', 'Нью-Йорк'))
             ],
             [
-              Markup.button.locationRequest('📍 Отправить геолокацию')
-            ],
-            [
               Markup.button.callback('⬅️ Назад', SettingsCallback.create('cities', 'list'))
             ]
           ]);
           
+          // Клавиатура для запроса геолокации (отдельное сообщение)
+          const locationKeyboard = Markup.keyboard([
+            [Markup.button.locationRequest('📍 Отправить геолокацию')]
+          ]).oneTime().resize();
+          
           try {
             if (ctx.callbackQuery && 'message' in ctx.callbackQuery && ctx.callbackQuery.message) {
               await ctx.editMessageText(text, keyboard);
+              // Отправляем отдельное сообщение с кнопкой геолокации
+              await ctx.reply('Или отправьте геолокацию:', locationKeyboard);
             } else {
               await ctx.reply(text, keyboard);
+              await ctx.reply('Или отправьте геолокацию:', locationKeyboard);
             }
           } catch (err) {
             // Если не удалось отредактировать, отправляем новое сообщение
             await ctx.reply(text, keyboard);
+            await ctx.reply('Или отправьте геолокацию:', locationKeyboard);
           }
         } else if (parsed.action === 'select') {
           // Показываем детали города и действия

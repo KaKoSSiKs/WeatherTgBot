@@ -65,22 +65,21 @@ export async function handleMenuCallback(
       const text = `⚙️ Настройки\n\n` +
         `📍 Локации: ${locations.length}\n` +
         `🌡️ Единицы: ${settings?.temperatureUnit === 'FAHRENHEIT' ? 'Фаренгейт' : 'Цельсий'}\n` +
-        `🌐 Язык: ${settings?.language || 'ru'}\n\n` +
+        `🌐 Язык: ${user.languageCode || 'ru'}\n\n` +
         `Выберите раздел:`;
       
-      const keyboard = {
-        inline_keyboard: [
-          [
-            { text: '📍 Мои города', callback_data: 'settings:cities:list' }
-          ],
-          [
-            { text: '🌡️ Единицы измерения', callback_data: 'settings:units:show' }
-          ],
-          [
-            { text: '🏠 Главное меню', callback_data: 'nav:main_menu' }
-          ]
+      const { Markup } = await import('telegraf');
+      const keyboard = Markup.inlineKeyboard([
+        [
+          Markup.button.callback('📍 Мои города', 'settings:cities:list')
+        ],
+        [
+          Markup.button.callback('🌡️ Единицы измерения', 'settings:units:show')
+        ],
+        [
+          Markup.button.callback('🏠 Главное меню', 'nav:main_menu')
         ]
-      };
+      ]);
       
       const result = await ctx.editMessageText(text, keyboard);
       if (result && typeof result === 'object' && 'message_id' in result) {

@@ -24,13 +24,20 @@ declare global {
 /**
  * Простая валидация initData (в продакшене использовать @twa-dev/init-data-node)
  */
-function parseInitData(initData: string): { user?: { id: string } } | null {
+function parseInitData(initData: string): { user?: { id: string; first_name?: string; last_name?: string; username?: string } } | null {
   try {
     const params = new URLSearchParams(initData);
     const userStr = params.get('user');
     if (!userStr) return null;
     const user = JSON.parse(userStr);
-    return { user: { id: String(user.id) } };
+    return { 
+      user: { 
+        id: String(user.id),
+        first_name: user.first_name,
+        last_name: user.last_name,
+        username: user.username
+      } 
+    };
   } catch {
     return null;
   }
