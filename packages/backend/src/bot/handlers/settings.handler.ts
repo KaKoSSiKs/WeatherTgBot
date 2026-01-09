@@ -1,384 +1,381 @@
 /**
  * Settings Handler
  * 
- * Обработчики для настроек (города, параметры).
+ * Обработчик callback'ов для настроек.
  */
 
 import type { Context } from 'telegraf';
-import { UserRepository, LocationRepository, UserSettingsRepository } from '../../storage/prisma/repositories';
-import { SettingsCallback } from '../keyboards/callback-data';
-import {
-  getSettingsMainKeyboard,
-  getCitiesMenuKeyboard,
-  getCityDeleteKeyboard,
-  getCitySetMainKeyboard,
-  getLocationQuickPickKeyboard,
-  getLocationShareKeyboard,
-} from '../keyboards/settings.keyboard';
-import { geocodeCity, getPopularCities } from '../../shared/utils/geocoding';
+import { Markup } from 'telegraf';
+import { SettingsCallback, WeatherCallback } from '../keyboards/callback_data';
+import { getCitySelectionKeyboard, getNoCitiesKeyboard } from '../keyboards/currentWeather';
+import { locationQuickPickKeyboard, locationShareKeyboard } from '../keyboards/locationQuickPick';
+import { mainMenuKeyboard, MAIN_MENU_TEXT } from '../keyboards';
+import { UserRepository } from '../../storage/prisma/repositories';
+import { LocationRepository } from '../../storage/prisma/repositories/location.repository';
+import { UserSettingsRepository } from '../../storage/prisma/repositories/user-settings.repository';
+import { pushNavigationState, popNavigationState } from '../../shared/utils/navigation';
+import { handleError } from './error.handler';
 import { logger } from '../../shared/utils/logger';
+import { geocodeCity } from '../../integrations/geocoding/geocoding.service';
 
 /**
- * Показать главное меню настроек
+ * Обработчик callback'ов настроек
  */
-export async function showSettingsMain(ctx: Context): Promise<void> {
-  const telegramId = ctx.from?.id?.toString();
-  if (!telegramId) return;
+export async function handleSettingsCallback(ctx: Context): Promise<void> {
+  const userId = ctx.from?.id;
+  if (!userId) return;
 
   try {
-    const keyboard = getSettingsMainKeyboard();
-    const message = '⚙️ Настройки\n\nВыберите раздел:';
-
-    if (ctx.callbackQuery) {
-      try {
-        await ctx.editMessageText(message, keyboard);
-        await ctx.answerCbQuery();
-      } catch (error: any) {
-        if (error.description?.includes('message is not modified')) {
-          await ctx.answerCbQuery();
-          return;
-        }
-        await ctx.reply(message, keyboard);
-      }
-    } else {
-      await ctx.reply(message, keyboard);
-    }
-  } catch (error) {
-    logger.error('Error in showSettingsMain:', error);
-    await ctx.reply('❌ Произошла ошибка при открытии настроек.');
-  }
-}
-
-/**
- * Показать меню городов
- */
-export async function showCitiesMenu(ctx: Context): Promise<void> {
-  const telegramId = ctx.from?.id?.toString();
-  if (!telegramId) return;
-
-  try {
-    const userRepo = new UserRepository();
-    const locationRepo = new LocationRepository();
-    const settingsRepo = new UserSettingsRepository();
-    
-    const user = await userRepo.findByTelegramId(telegramId);
-    if (!user) {
-      await ctx.reply('❌ Пользователь не найден. Используйте /start для регистрации.');
+    await ctx.answerCbQuery();
+  } catch (error: any) {
+    if (error.description?.includes('query is too old')) {
       return;
     }
+  }
 
-    // Получаем все локации пользователя
-    const locations = await locationRepo.findByUserId(user.id);
-    
-    // Получаем настройки
-    const settings = await settingsRepo.findByUserId(user.id);
-    const defaultLocationId = settings?.defaultLocationId ?? null;
+  const data = ctx.callbackQuery && 'data' in ctx.callbackQuery ? ctx.callbackQuery.data : '';
+  const parsed = SettingsCallback.parse(data);
+  
+  if (!parsed) {
+    return;
+  }
 
-    const keyboard = getCitiesMenuKeyboard();
-    
-    let text = '📍 Ваши сохраненные города:';
-    if (locations.length === 0) {
-      text += '\n\nУ вас пока нет сохраненных городов.';
-    } else {
-      const lines: string[] = [];
-      locations.forEach((loc, idx) => {
-        const isDefault = defaultLocationId === loc.id;
-        lines.push(`${idx + 1}. ${loc.name}${isDefault ? ' (основной)' : ''}`);
-      });
-      text += `\n\n${lines.join('\n')}`;
-    }
+  const telegramId = userId.toString();
+  const userRepo = new UserRepository();
+  const user = await userRepo.findByTelegramId(telegramId);
+  
+  if (!user) {
+    await ctx.reply('❌ Пользователь не найден. Используйте /start для регистрации.');
+    return;
+  }
 
-    if (ctx.callbackQuery) {
-      try {
-        await ctx.editMessageText(text, keyboard);
-        await ctx.answerCbQuery();
-      } catch (error: any) {
-        if (error.description?.includes('message is not modified')) {
-          await ctx.answerCbQuery();
-          return;
+  try {
+    switch (parsed.section) {
+      case 'main': {
+        if (parsed.action === 'show') {
+          const settingsRepo = new UserSettingsRepository();
+          const settings = await settingsRepo.findByUserId(user.id);
+          const locationRepo = new LocationRepository();
+          const locations = await locationRepo.findByUserId(user.id);
+          
+          const text = `⚙️ Настройки\n\n` +
+            `📍 Локации: ${locations.length}\n` +
+            `🌡️ Единицы: ${settings?.temperatureUnit === 'FAHRENHEIT' ? 'Фаренгейт' : 'Цельсий'}\n` +
+            `🌐 Язык: ${settings?.language || 'ru'}\n\n` +
+            `Выберите раздел:`;
+          
+          const keyboard = Markup.inlineKeyboard([
+            [
+              Markup.button.callback('📍 Мои города', SettingsCallback.create('cities', 'list'))
+            ],
+            [
+              Markup.button.callback('🌡️ Единицы измерения', SettingsCallback.create('units', 'show'))
+            ],
+            [
+              Markup.button.callback('🏠 Главное меню', 'nav:main_menu')
+            ]
+          ]);
+          
+          await ctx.editMessageText(text, keyboard);
         }
-        await ctx.reply(text, keyboard);
+        break;
       }
-    } else {
-      await ctx.reply(text, keyboard);
+      
+      case 'cities': {
+        if (parsed.action === 'list') {
+          const locationRepo = new LocationRepository();
+          const locations = await locationRepo.findByUserId(user.id);
+          
+          if (locations.length === 0) {
+            const text = `📍 Мои города\n\nУ вас пока нет сохраненных городов.\n\nДобавьте город, чтобы получать прогнозы погоды.`;
+            await ctx.editMessageText(text, getNoCitiesKeyboard('settings'));
+          } else {
+            const text = `📍 Мои города (${locations.length}):\n\nВыберите город для просмотра или управления:`;
+            await ctx.editMessageText(text, getCitySelectionKeyboard(locations, 'settings'));
+          }
+        } else if (parsed.action === 'add') {
+          const text = '📍 Добавление города\n\nОтправьте название города или поделитесь геолокацией.\n\nПопулярные города:';
+          const keyboard = Markup.inlineKeyboard([
+            [
+              Markup.button.callback('📍 Москва', SettingsCallback.create('cities', 'quick_add', 'Москва')),
+              Markup.button.callback('📍 Санкт-Петербург', SettingsCallback.create('cities', 'quick_add', 'Санкт-Петербург'))
+            ],
+            [
+              Markup.button.callback('📍 Лондон', SettingsCallback.create('cities', 'quick_add', 'Лондон')),
+              Markup.button.callback('📍 Нью-Йорк', SettingsCallback.create('cities', 'quick_add', 'Нью-Йорк'))
+            ],
+            [
+              Markup.button.locationRequest('📍 Отправить геолокацию')
+            ],
+            [
+              Markup.button.callback('⬅️ Назад', SettingsCallback.create('cities', 'list'))
+            ]
+          ]);
+          
+          try {
+            if (ctx.callbackQuery && 'message' in ctx.callbackQuery && ctx.callbackQuery.message) {
+              await ctx.editMessageText(text, keyboard);
+            } else {
+              await ctx.reply(text, keyboard);
+            }
+          } catch (err) {
+            // Если не удалось отредактировать, отправляем новое сообщение
+            await ctx.reply(text, keyboard);
+          }
+        } else if (parsed.action === 'select') {
+          // Показываем детали города и действия
+          if (parsed.param) {
+            const locationId = parseInt(String(parsed.param));
+            const locationRepo = new LocationRepository();
+            const location = await locationRepo.findById(locationId);
+            
+            if (location && location.userId === user.id) {
+              const settingsRepo = new UserSettingsRepository();
+              const settings = await settingsRepo.findByUserId(user.id);
+              const isDefault = settings?.defaultLocationId === locationId;
+              
+              const text = `📍 ${location.name}\n\n` +
+                `Координаты: ${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}\n` +
+                `${isDefault ? '✅ Установлен по умолчанию' : 'Не установлен по умолчанию'}\n\n` +
+                `Выберите действие:`;
+              
+              const keyboard = Markup.inlineKeyboard([
+                [
+                  Markup.button.callback('🌤️ Показать погоду', WeatherCallback.create('select_city', locationId, 'weather'))
+                ],
+                [
+                  Markup.button.callback(
+                    isDefault ? '✅ По умолчанию' : '⭐ Установить по умолчанию',
+                    SettingsCallback.create('cities', 'set_default', locationId)
+                  )
+                ],
+                [
+                  Markup.button.callback('🗑️ Удалить', SettingsCallback.create('cities', 'delete', locationId))
+                ],
+                [
+                  Markup.button.callback('⬅️ К списку', SettingsCallback.create('cities', 'list'))
+                ]
+              ]);
+              
+              await ctx.editMessageText(text, keyboard);
+            }
+          }
+        } else if (parsed.action === 'delete') {
+          if (parsed.param) {
+            const locationId = parseInt(String(parsed.param));
+            const locationRepo = new LocationRepository();
+            const location = await locationRepo.findById(locationId);
+            
+            if (location && location.userId === user.id) {
+              await locationRepo.delete(locationId);
+              await ctx.answerCbQuery('Город удален');
+              
+              // Обновляем список
+              const locations = await locationRepo.findByUserId(user.id);
+              if (locations.length === 0) {
+                const text = `📍 Мои города\n\nУ вас пока нет сохраненных городов.`;
+                await ctx.editMessageText(text, getNoCitiesKeyboard('settings'));
+              } else {
+                const text = `📍 Мои города (${locations.length}):\n\nВыберите город для просмотра или управления:`;
+                await ctx.editMessageText(text, getCitySelectionKeyboard(locations, 'settings'));
+              }
+            }
+          }
+        } else if (parsed.action === 'set_default') {
+          if (parsed.param) {
+            const locationId = parseInt(String(parsed.param));
+            const settingsRepo = new UserSettingsRepository();
+            const settings = await settingsRepo.findByUserId(user.id);
+            
+            if (settings) {
+              await settingsRepo.update(settings.id, {
+                defaultLocation: { connect: { id: locationId } }
+              });
+            } else {
+              await settingsRepo.create({
+                user: { connect: { id: user.id } },
+                defaultLocation: { connect: { id: locationId } }
+              });
+            }
+            
+            await ctx.answerCbQuery('Город установлен по умолчанию');
+            
+            // Возвращаемся к списку
+            const locationRepo = new LocationRepository();
+            const locations = await locationRepo.findByUserId(user.id);
+            const text = `📍 Мои города (${locations.length}):\n\nВыберите город для просмотра или управления:`;
+            await ctx.editMessageText(text, getCitySelectionKeyboard(locations, 'settings'));
+          }
+        }
+        break;
+      }
+      
+      case 'units': {
+        if (parsed.action === 'show') {
+          const settingsRepo = new UserSettingsRepository();
+          const settings = await settingsRepo.findByUserId(user.id);
+          const currentUnit = settings?.temperatureUnit === 'FAHRENHEIT' ? 'imperial' : 'metric';
+          
+          const text = `🌡️ Единицы измерения\n\nТекущие единицы: ${currentUnit === 'metric' ? 'Цельсий (°C)' : 'Фаренгейт (°F)'}\n\nВыберите единицы:`;
+          
+          const keyboard = Markup.inlineKeyboard([
+            [
+              Markup.button.callback('🌡️ Цельсий (°C)', SettingsCallback.create('units', 'set', 'metric'))
+            ],
+            [
+              Markup.button.callback('🌡️ Фаренгейт (°F)', SettingsCallback.create('units', 'set', 'imperial'))
+            ],
+            [
+              Markup.button.callback('⬅️ Назад', SettingsCallback.create('main', 'show'))
+            ]
+          ]);
+          
+          await ctx.editMessageText(text, keyboard);
+        } else if (parsed.action === 'set') {
+          const unit = parsed.param === 'imperial' ? 'FAHRENHEIT' : 'CELSIUS';
+          const settingsRepo = new UserSettingsRepository();
+          const settings = await settingsRepo.findByUserId(user.id);
+          
+          if (settings) {
+            await settingsRepo.update(settings.id, { temperatureUnit: unit });
+          } else {
+            await settingsRepo.create({
+              user: { connect: { id: user.id } },
+              temperatureUnit: unit
+            });
+          }
+          
+          await ctx.answerCbQuery(`Единицы изменены на ${parsed.param === 'imperial' ? 'Фаренгейт' : 'Цельсий'}`);
+          
+          // Возвращаемся к настройкам единиц
+          const text = `🌡️ Единицы измерения\n\nТекущие единицы: ${parsed.param === 'imperial' ? 'Фаренгейт (°F)' : 'Цельсий (°C)'}\n\nВыберите единицы:`;
+          const keyboard = Markup.inlineKeyboard([
+            [
+              Markup.button.callback('🌡️ Цельсий (°C)', SettingsCallback.create('units', 'set', 'metric'))
+            ],
+            [
+              Markup.button.callback('🌡️ Фаренгейт (°F)', SettingsCallback.create('units', 'set', 'imperial'))
+            ],
+            [
+              Markup.button.callback('⬅️ Назад', SettingsCallback.create('main', 'show'))
+            ]
+          ]);
+          await ctx.editMessageText(text, keyboard);
+        }
+        break;
+      }
+      
+      default:
+        logger.warn(`Unknown settings section: ${parsed.section}`);
     }
   } catch (error) {
-    logger.error('Error in showCitiesMenu:', error);
-    await ctx.reply('❌ Произошла ошибка при получении списка городов.');
+    logger.error('Error in settings handler:', error);
+    const errorMessage = handleError(ctx, error);
+    await ctx.reply(errorMessage);
   }
 }
 
 /**
- * Показать меню добавления города
+ * Обработка текстового сообщения для добавления города
  */
-export async function showAddCityMenu(ctx: Context): Promise<void> {
-  try {
-    const quickPickKeyboard = getLocationQuickPickKeyboard();
-    const shareKeyboard = getLocationShareKeyboard();
-    
-    await ctx.reply(
-      '📍 Добавление города\n\nВыберите город из списка или отправьте свою геолокацию:',
-      quickPickKeyboard
-    );
-    
-    await ctx.reply(
-      'Или отправьте геолокацию через кнопку ниже:',
-      shareKeyboard
-    );
-  } catch (error) {
-    logger.error('Error in showAddCityMenu:', error);
-    await ctx.reply('❌ Произошла ошибка при открытии меню добавления города.');
-  }
-}
-
-/**
- * Добавить город по названию
- */
-export async function addCityByName(ctx: Context, cityName: string): Promise<void> {
-  const telegramId = ctx.from?.id?.toString();
-  if (!telegramId) return;
+export async function handleCityInput(
+  ctx: Context,
+  cityName: string
+): Promise<boolean> {
+  const userId = ctx.from?.id;
+  if (!userId) return false;
 
   try {
+    const telegramId = userId.toString();
     const userRepo = new UserRepository();
-    const locationRepo = new LocationRepository();
-    
     const user = await userRepo.findByTelegramId(telegramId);
-    if (!user) {
-      await ctx.reply('❌ Пользователь не найден. Используйте /start для регистрации.');
-      return;
-    }
-
-    // Геокодинг города
-    const geocoded = geocodeCity(cityName);
+    
+    if (!user) return false;
+    
+    // Геокодируем город
+    const geocoded = await geocodeCity(cityName);
     if (!geocoded) {
-      await ctx.reply(`❌ Город "${cityName}" не найден. Попробуйте другой город.`);
-      return;
+      await ctx.reply('❌ Город не найден. Попробуйте другой вариант.');
+      return true;
     }
-
-    // Проверяем, есть ли уже такой город
+    
+    const locationRepo = new LocationRepository();
+    
+    // Проверяем, есть ли уже такая локация
     const existing = await locationRepo.findByUserId(user.id);
-    const alreadyExists = existing.some(loc => loc.name.toLowerCase() === geocoded.name.toLowerCase());
-    
-    if (alreadyExists) {
-      await ctx.reply(`ℹ️ Город "${geocoded.name}" уже добавлен.`, { reply_markup: { remove_keyboard: true } });
-      return;
-    }
-
-    // Создаем новую локацию
-    const location = await locationRepo.create({
-      name: geocoded.name,
-      latitude: geocoded.latitude,
-      longitude: geocoded.longitude,
-      countryCode: geocoded.countryCode || null,
-      user: { connect: { id: user.id } },
-    });
-
-    await ctx.reply(
-      `✅ Город "${location.name}" успешно добавлен!\n\nТеперь вы можете выбрать его для просмотра погоды.`,
-      { reply_markup: { remove_keyboard: true } }
+    let location = existing.find(l => 
+      Math.abs(l.latitude - geocoded.latitude) < 0.01 &&
+      Math.abs(l.longitude - geocoded.longitude) < 0.01
     );
-
-    logger.info(`User ${telegramId} added location: ${location.name}`);
+    
+    if (!location) {
+      // Создаем новую локацию
+      location = await locationRepo.create({
+        name: geocoded.name,
+        latitude: geocoded.latitude,
+        longitude: geocoded.longitude,
+        countryCode: null,
+        user: { connect: { id: user.id } }
+      });
+      
+      await ctx.reply(`✅ Город "${geocoded.name}" добавлен!`);
+    } else {
+      await ctx.reply(`ℹ️ Город "${geocoded.name}" уже есть в вашем списке.`);
+    }
+    
+    return true;
   } catch (error) {
-    logger.error('Error in addCityByName:', error);
-    await ctx.reply('❌ Произошла ошибка при добавлении города. Попробуйте еще раз.');
+    logger.error('Error adding city:', error);
+    return false;
   }
 }
 
 /**
- * Добавить город по геолокации
+ * Обработка геолокации
  */
-export async function addCityByLocation(ctx: Context, latitude: number, longitude: number): Promise<void> {
-  const telegramId = ctx.from?.id?.toString();
-  if (!telegramId) return;
+export async function handleLocation(
+  ctx: Context,
+  latitude: number,
+  longitude: number
+): Promise<boolean> {
+  const userId = ctx.from?.id;
+  if (!userId) return false;
 
   try {
-    // TODO: Обратный геокодинг для получения названия города по координатам
-    // Пока используем дефолтное название
-    await ctx.reply(
-      '📍 Геолокация получена.\n\nОбратный геокодинг пока не реализован. Используйте добавление по названию города.',
-      { reply_markup: { remove_keyboard: true } }
+    const telegramId = userId.toString();
+    const userRepo = new UserRepository();
+    const user = await userRepo.findByTelegramId(telegramId);
+    
+    if (!user) return false;
+    
+    const locationRepo = new LocationRepository();
+    
+    // Проверяем, есть ли уже такая локация
+    const existing = await locationRepo.findByUserId(user.id);
+    let location = existing.find(l => 
+      Math.abs(l.latitude - latitude) < 0.01 &&
+      Math.abs(l.longitude - longitude) < 0.01
     );
+    
+    if (!location) {
+      // Создаем новую локацию
+      location = await locationRepo.create({
+        name: 'Моё местоположение',
+        latitude,
+        longitude,
+        countryCode: null,
+        user: { connect: { id: user.id } }
+      });
+      
+      await ctx.reply('✅ Ваше местоположение добавлено!');
+    } else {
+      await ctx.reply('ℹ️ Это местоположение уже есть в вашем списке.');
+    }
+    
+    return true;
   } catch (error) {
-    logger.error('Error in addCityByLocation:', error);
-    await ctx.reply('❌ Произошла ошибка при обработке геолокации.');
+    logger.error('Error adding location:', error);
+    return false;
   }
-}
-
-/**
- * Удалить город
- */
-export async function deleteCity(ctx: Context, locationId: number): Promise<void> {
-  const telegramId = ctx.from?.id?.toString();
-  if (!telegramId) return;
-
-  try {
-    const userRepo = new UserRepository();
-    const locationRepo = new LocationRepository();
-    const settingsRepo = new UserSettingsRepository();
-    
-    const user = await userRepo.findByTelegramId(telegramId);
-    if (!user) {
-      await ctx.reply('❌ Пользователь не найден.');
-      return;
-    }
-
-    // Проверяем, что локация принадлежит пользователю
-    const location = await locationRepo.findById(locationId);
-    if (!location || location.userId !== user.id) {
-      await ctx.reply('❌ Локация не найдена или не принадлежит вам.');
-      return;
-    }
-
-    // Удаляем локацию
-    await locationRepo.delete(locationId);
-
-    // Если это была дефолтная локация, сбрасываем её
-    const settings = await settingsRepo.findByUserId(user.id);
-    if (settings?.defaultLocationId === locationId) {
-      await settingsRepo.setDefaultLocation(user.id, null);
-    }
-
-    await ctx.reply(`✅ Город "${location.name}" удален.`);
-    await showCitiesMenu(ctx);
-  } catch (error) {
-    logger.error('Error in deleteCity:', error);
-    await ctx.reply('❌ Произошла ошибка при удалении города.');
-  }
-}
-
-/**
- * Установить город как основной
- */
-export async function setMainCity(ctx: Context, locationId: number): Promise<void> {
-  const telegramId = ctx.from?.id?.toString();
-  if (!telegramId) return;
-
-  try {
-    const userRepo = new UserRepository();
-    const locationRepo = new LocationRepository();
-    const settingsRepo = new UserSettingsRepository();
-    
-    const user = await userRepo.findByTelegramId(telegramId);
-    if (!user) {
-      await ctx.reply('❌ Пользователь не найден.');
-      return;
-    }
-
-    // Проверяем, что локация принадлежит пользователю
-    const location = await locationRepo.findById(locationId);
-    if (!location || location.userId !== user.id) {
-      await ctx.reply('❌ Локация не найдена или не принадлежит вам.');
-      return;
-    }
-
-    // Устанавливаем как дефолтную
-    await settingsRepo.setDefaultLocation(user.id, locationId);
-
-    await ctx.reply(`✅ Город "${location.name}" установлен как основной.`);
-    await showCitiesMenu(ctx);
-  } catch (error) {
-    logger.error('Error in setMainCity:', error);
-    await ctx.reply('❌ Произошла ошибка при установке основного города.');
-  }
-}
-
-/**
- * Регистрация обработчиков настроек
- */
-export function registerSettingsHandlers(bot: any): void {
-  // Обработчики для настроек
-  bot.action(/^settings:/, async (ctx: Context) => {
-    try {
-          await ctx.answerCbQuery();
-    } catch (error: any) {
-      if (error.description?.includes('query is too old')) {
-        return;
-      }
-    }
-
-    const data = ctx.callbackQuery && 'data' in ctx.callbackQuery ? ctx.callbackQuery.data : '';
-    const parsed = SettingsCallback.parse(data);
-    
-    if (!parsed) {
-      await ctx.reply('Ошибка обработки запроса.');
-      return;
-    }
-
-    const { section, action, param } = parsed;
-
-    switch (section) {
-      case 'main':
-        // Если action === 'show' или action === 'main' или action не указан - показываем главное меню настроек
-        if (!action || action === 'show' || action === 'main') {
-          await showSettingsMain(ctx);
-        }
-        break;
-      case 'cities':
-        if (action === 'show') {
-          await showCitiesMenu(ctx);
-        } else if (action === 'add') {
-          await showAddCityMenu(ctx);
-        } else if (action === 'delete_menu') {
-          // Показываем список городов для удаления
-          const telegramId = ctx.from?.id?.toString();
-          if (telegramId) {
-            const userRepo = new UserRepository();
-            const locationRepo = new LocationRepository();
-            const user = await userRepo.findByTelegramId(telegramId);
-            if (user) {
-              const locations = await locationRepo.findByUserId(user.id);
-              const keyboard = getCityDeleteKeyboard(locations.map(loc => ({ id: loc.id, name: loc.name })));
-              await ctx.editMessageText('🗑 Выберите город для удаления:', keyboard);
-            }
-          }
-        } else if (action === 'delete' && param) {
-          await deleteCity(ctx, Number(param));
-        } else if (action === 'set_main_menu') {
-          // Показываем список городов для установки основного
-          const telegramId = ctx.from?.id?.toString();
-          if (telegramId) {
-            const userRepo = new UserRepository();
-            const locationRepo = new LocationRepository();
-            const user = await userRepo.findByTelegramId(telegramId);
-            if (user) {
-              const locations = await locationRepo.findByUserId(user.id);
-              const keyboard = getCitySetMainKeyboard(locations.map(loc => ({ id: loc.id, name: loc.name })));
-              await ctx.editMessageText('📌 Выберите город как основной:', keyboard);
-            }
-          }
-        } else if (action === 'set_main' && param) {
-          await setMainCity(ctx, Number(param));
-        }
-        break;
-    }
-  });
-
-  // Обработка текстовых сообщений для добавления города (только если это не команда)
-  bot.hears(/^(?!\/)/, async (ctx: Context) => {
-    const text = ctx.message && 'text' in ctx.message ? ctx.message.text : '';
-    
-    // Проверяем, является ли это названием города из популярных
-    if (text && getPopularCities().some(city => city.name.toLowerCase() === text.toLowerCase())) {
-      await addCityByName(ctx, text);
-      return;
-    }
-    
-    // Также проверяем через geocodeCity для других городов
-    if (text) {
-      const geocoded = geocodeCity(text);
-      if (geocoded) {
-        await addCityByName(ctx, text);
-      }
-    }
-  });
-
-  // Обработка геолокации
-  bot.on('location', async (ctx: Context) => {
-    const location = ctx.message && 'location' in ctx.message ? ctx.message.location : null;
-    if (location) {
-      await addCityByLocation(ctx, location.latitude, location.longitude);
-    }
-  });
 }
 

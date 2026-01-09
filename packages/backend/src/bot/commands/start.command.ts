@@ -1,28 +1,29 @@
 /**
  * Start Command
  * 
- * Команда /start - регистрация и приветствие пользователя с главным меню.
+ * Команда /start - регистрация и приветствие пользователя.
  */
 
 import type { Context } from 'telegraf';
-import { UserRepository, UserSettingsRepository } from '../../storage/prisma/repositories';
+import { UserRepository } from '../../storage/prisma/repositories';
 import { logger } from '../../shared/utils/logger';
 import { mainMenuKeyboard, MAIN_MENU_TEXT } from '../keyboards';
+import { resetToMainMenu } from '../../shared/utils/navigation';
 
 /**
  * Обработать команду /start
  */
 export async function handleStartCommand(ctx: Context): Promise<void> {
-  const telegramId = ctx.from?.id?.toString();
+  const userId = ctx.from?.id;
+  const telegramId = userId?.toString();
   
-  if (!telegramId) {
+  if (!telegramId || !userId) {
     await ctx.reply('❌ Ошибка: не удалось определить ваш ID.');
     return;
   }
   
   try {
     const userRepo = new UserRepository();
-    const settingsRepo = new UserSettingsRepository();
     
     // Проверяем, существует ли пользователь
     let user = await userRepo.findByTelegramId(telegramId);
@@ -34,16 +35,20 @@ export async function handleStartCommand(ctx: Context): Promise<void> {
         languageCode: ctx.from?.language_code || 'ru',
       });
       
-      // Создаем настройки по умолчанию
-      await settingsRepo.createDefault(user.id);
-      
       logger.info(`New user registered: ${telegramId}`);
     }
     
-    // Приветствие с главным меню (БЕЗ имени, как в старом боте)
-    const welcomeMessage = MAIN_MENU_TEXT;
+    // Сбрасываем навигацию и устанавливаем главное меню
+    resetToMainMenu(userId);
     
-    await ctx.reply(welcomeMessage, mainMenuKeyboard());
+    // Показываем главное меню
+    const message = await ctx.reply(MAIN_MENU_TEXT, mainMenuKeyboard());
+    
+    // Сохраняем состояние навигации
+    if (message && 'message_id' in message) {
+      const { pushNavigationState } = await import('../../shared/utils/navigation');
+      pushNavigationState(userId, 'main_menu', {}, message.message_id);
+    }
     
   } catch (error) {
     logger.error('Error in /start command:', error);

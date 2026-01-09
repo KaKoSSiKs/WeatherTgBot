@@ -95,3 +95,6 @@ export const WeatherPredictionModal = ({ onClose }: Props) => {
 
 
 
+
+
+

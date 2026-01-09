@@ -6,19 +6,19 @@
 
 import { createBot } from './bot';
 import { WeatherService } from '../services/weather';
-import { NotificationService } from '../services/notification';
 import { OpenWeatherProvider } from '../integrations/weather';
+import { NotificationService } from '../services/notification/notification.service';
+import { NotificationRepository } from '../storage/prisma/repositories/notification.repository';
+import { UserSettingsRepository } from '../storage/prisma/repositories/user-settings.repository';
+import { LocationRepository } from '../storage/prisma/repositories/location.repository';
 import { appConfig } from '../config';
 import { connectPrisma, disconnectPrisma } from '../storage/prisma/client';
 import { logger } from '../shared/utils/logger';
-import { startNotificationScheduler } from './scheduler/notification.scheduler';
 
 /**
  * Запустить бота
  */
 export async function startBot(): Promise<void> {
-  let scheduler: { stop: () => void } | null = null;
-  
   try {
     // Подключаемся к БД
     await connectPrisma();
@@ -35,18 +35,25 @@ export async function startBot(): Promise<void> {
     // Создаем WeatherService
     const weatherService = new WeatherService(weatherProvider);
     
-    // Создаем NotificationService
+    // Инициализируем NotificationService
+    const notificationRepo = new NotificationRepository();
+    const settingsRepo = new UserSettingsRepository();
+    const locationRepo = new LocationRepository();
     const notificationService = new NotificationService(
-      undefined, // notificationRepo (создастся автоматически)
-      undefined, // userRepo (создастся автоматически)
-      weatherService
+      notificationRepo,
+      settingsRepo,
+      locationRepo,
+      weatherService,
+      appConfig.TZ
     );
     
     // Создаем бота
     const bot = createBot(appConfig.BOT_TOKEN, weatherService, notificationService);
     
-    // Запускаем планировщик уведомлений
-    scheduler = startNotificationScheduler(bot, notificationService);
+    // Устанавливаем бота в NotificationService и запускаем планировщик
+    notificationService.setBot(bot);
+    notificationService.startScheduler();
+    logger.info('Notification scheduler started');
     
     // Запускаем бота
     await bot.launch();
@@ -55,9 +62,7 @@ export async function startBot(): Promise<void> {
     // Graceful shutdown
     process.once('SIGINT', () => {
       logger.info('SIGINT received, shutting down...');
-      if (scheduler) {
-        scheduler.stop();
-      }
+      notificationService.stopScheduler();
       bot.stop('SIGINT');
       disconnectPrisma().then(() => {
         process.exit(0);
@@ -66,9 +71,7 @@ export async function startBot(): Promise<void> {
     
     process.once('SIGTERM', () => {
       logger.info('SIGTERM received, shutting down...');
-      if (scheduler) {
-        scheduler.stop();
-      }
+      notificationService.stopScheduler();
       bot.stop('SIGTERM');
       disconnectPrisma().then(() => {
         process.exit(0);
@@ -77,9 +80,6 @@ export async function startBot(): Promise<void> {
     
   } catch (error) {
     logger.error('Failed to start bot:', error);
-    if (scheduler) {
-      scheduler.stop();
-    }
     await disconnectPrisma();
     process.exit(1);
   }

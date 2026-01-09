@@ -82,23 +82,23 @@ export class OpenWeatherProvider implements WeatherProvider {
   private normalizeCurrentWeather(
     data: OpenWeatherCurrentResponse
   ): CurrentWeather {
-    const main = data.main || {};
-    const weather = (data.weather || [{}])[0] || {};
-    const wind = data.wind || {};
-    const clouds = data.clouds || {};
+    const main = data.main;
+    const weather = data.weather?.[0];
+    const wind = data.wind;
+    const clouds = data.clouds;
 
     return {
-      temperature: main.temp ?? 0,
-      feelsLike: main.feels_like ?? main.temp ?? 0,
-      humidity: main.humidity ?? 0,
-      pressure: main.pressure ?? 0,
-      windSpeed: wind.speed ?? 0,
-      windDirection: wind.deg,
+      temperature: main?.temp ?? 0,
+      feelsLike: main?.feels_like ?? main?.temp ?? 0,
+      humidity: main?.humidity ?? 0,
+      pressure: main?.pressure ?? 0,
+      windSpeed: wind?.speed ?? 0,
+      windDirection: wind?.deg,
       visibility: data.visibility,
-      cloudiness: clouds.all,
-      condition: weather.main || 'Unknown',
-      description: weather.description || 'No description',
-      icon: weather.icon || '01d',
+      cloudiness: clouds?.all ?? 0,
+      condition: weather?.main || 'Unknown',
+      description: weather?.description || 'No description',
+      icon: weather?.icon || '01d',
       timestamp: new Date((data.dt || Date.now() / 1000) * 1000),
     };
   }
@@ -130,34 +130,38 @@ export class OpenWeatherProvider implements WeatherProvider {
     const daily: DailyForecast[] = Array.from(dailyMap.entries())
       .slice(0, 5) // Максимум 5 дней
       .map(([dateKey, items]) => {
-        const temps = items.map((item) => item.main.temp);
-        const feelsLike = items.map((item) => item.main.feels_like);
-        const weather = items[Math.floor(items.length / 2)]; // Берем средний элемент для описания дня
+        const temps = items.map((item) => item.main?.temp ?? 0);
+        const feelsLike = items.map((item) => item.main?.feels_like ?? 0);
+        const weatherItem = items[Math.floor(items.length / 2)]; // Берем средний элемент для описания дня
+        const weatherData = weatherItem?.weather?.[0];
+        const mainData = weatherItem?.main;
+        const windData = weatherItem?.wind;
+        const cloudsData = weatherItem?.clouds;
 
         return {
           date: new Date(dateKey),
           temperature: {
             min: Math.min(...temps),
             max: Math.max(...temps),
-            day: temps[Math.floor(temps.length / 2)] || temps[0],
-            night: temps[temps.length - 1] || temps[0],
+            day: temps[Math.floor(temps.length / 2)] || temps[0] || 0,
+            night: temps[temps.length - 1] || temps[0] || 0,
           },
           feelsLike: {
-            day: feelsLike[Math.floor(feelsLike.length / 2)] || feelsLike[0],
-            night: feelsLike[feelsLike.length - 1] || feelsLike[0],
+            day: feelsLike[Math.floor(feelsLike.length / 2)] || feelsLike[0] || 0,
+            night: feelsLike[feelsLike.length - 1] || feelsLike[0] || 0,
           },
-          condition: weather.weather[0]?.main || 'Unknown',
-          description: weather.weather[0]?.description || 'No description',
-          icon: weather.weather[0]?.icon || '01d',
-          humidity: weather.main.humidity || 0,
-          pressure: weather.main.pressure || 0,
-          windSpeed: weather.wind?.speed || 0,
-          windDirection: weather.wind?.deg,
-          cloudiness: weather.clouds?.all,
-          precipitation: weather.pop !== undefined
+          condition: weatherData?.main || 'Unknown',
+          description: weatherData?.description || 'No description',
+          icon: weatherData?.icon || '01d',
+          humidity: mainData?.humidity ?? 0,
+          pressure: mainData?.pressure ?? 0,
+          windSpeed: windData?.speed ?? 0,
+          windDirection: windData?.deg,
+          cloudiness: cloudsData?.all ?? 0,
+          precipitation: weatherItem?.pop !== undefined
             ? {
-                probability: weather.pop,
-                amount: weather.rain?.['3h'] || weather.snow?.['3h'],
+                probability: weatherItem.pop,
+                amount: weatherItem.rain?.['3h'] || weatherItem.snow?.['3h'],
               }
             : undefined,
         };
@@ -165,23 +169,23 @@ export class OpenWeatherProvider implements WeatherProvider {
 
     // Преобразуем в HourlyForecast
     const hourly: HourlyForecast[] = list.map((item) => {
-      const main = item.main || {};
-      const weather = (item.weather || [{}])[0] || {};
-      const wind = item.wind || {};
-      const clouds = item.clouds || {};
+      const main = item.main;
+      const weather = item.weather?.[0];
+      const wind = item.wind;
+      const clouds = item.clouds;
 
       return {
         time: new Date(item.dt * 1000),
-        temperature: main.temp ?? 0,
-        feelsLike: main.feels_like ?? main.temp ?? 0,
-        condition: weather.main || 'Unknown',
-        description: weather.description || 'No description',
-        icon: weather.icon || '01d',
-        humidity: main.humidity ?? 0,
-        pressure: main.pressure ?? 0,
-        windSpeed: wind.speed ?? 0,
-        windDirection: wind.deg,
-        cloudiness: clouds.all,
+        temperature: main?.temp ?? 0,
+        feelsLike: main?.feels_like ?? main?.temp ?? 0,
+        condition: weather?.main || 'Unknown',
+        description: weather?.description || 'No description',
+        icon: weather?.icon || '01d',
+        humidity: main?.humidity ?? 0,
+        pressure: main?.pressure ?? 0,
+        windSpeed: wind?.speed ?? 0,
+        windDirection: wind?.deg,
+        cloudiness: clouds?.all ?? 0,
         precipitation: item.pop !== undefined
           ? {
               probability: item.pop,
@@ -192,14 +196,15 @@ export class OpenWeatherProvider implements WeatherProvider {
       };
     });
 
+    const cityData = data.city;
     return {
       location: {
-        name: city.name || 'Unknown',
+        name: cityData?.name || 'Unknown',
         coordinates: {
-          latitude: city.coord?.lat || coordinates.latitude,
-          longitude: city.coord?.lon || coordinates.longitude,
+          latitude: cityData?.coord?.lat ?? coordinates.latitude,
+          longitude: cityData?.coord?.lon ?? coordinates.longitude,
         },
-        countryCode: city.country,
+        countryCode: cityData?.country,
       },
       daily,
       hourly,

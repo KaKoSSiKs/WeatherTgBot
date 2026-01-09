@@ -3,7 +3,7 @@
 Монорепозиторий для погодного Telegram-бота с уведомлениями и Mini App.
 
 ## Состав
-- `bot/` — Telegram-бот (TypeScript, grammY), Prisma + SQLite, планировщик уведомлений
+- `packages/backend/` — Telegram-бот (TypeScript, Telegraf), Prisma + PostgreSQL, планировщик уведомлений
 - `apps/miniapp/` — Mini App (Vite + React + TypeScript) — scaffold
 
 ## Требования
@@ -11,6 +11,26 @@
 - pnpm 9+
 
 ## Быстрый старт
+
+### 🐳 Запуск в Docker (рекомендуется)
+
+Самый простой способ запустить весь проект:
+
+```bash
+# Windows (PowerShell)
+.\docker-start.ps1
+
+# Linux/Mac
+./docker-start.sh
+
+# Или вручную
+docker-compose up -d
+```
+
+Подробнее: [README.DOCKER.md](./README.DOCKER.md) и [DOCKER.md](./DOCKER.md)
+
+### 💻 Локальная разработка
+
 1. Установите зависимости:
 ```bash
 pnpm install
@@ -18,14 +38,14 @@ pnpm install
 2. Настройте окружение:
 - Скопируйте `.env.example` в `.env`
 - Заполните переменные: `BOT_TOKEN`, `WEATHER_API_KEY`
-3. Настройка БД (SQLite + Prisma):
+3. Настройка БД (PostgreSQL + Prisma):
 ```bash
-pnpm -F bot prisma:generate
-pnpm -F bot prisma:migrate
+pnpm -F backend prisma:generate
+pnpm -F backend prisma:migrate
 ```
 4. Запуск бота в dev-режиме:
 ```bash
-pnpm -F bot dev
+pnpm -F backend dev
 ```
 
 ## Переменные окружения
@@ -42,8 +62,8 @@ pnpm -F bot dev
   - Форматы (единицы, язык), названия уведомлений, детализация, рекомендации по одежде, Mini App UI
 
 ## Скрипты
-- `pnpm -F bot dev` — локальная разработка бота (ts-node-dev)
-- `pnpm -F bot build && pnpm -F bot start` — прод-сборка и запуск
+- `pnpm -F backend dev` — локальная разработка бота (ts-node-dev)
+- `pnpm -F backend build && pnpm -F backend start` — прод-сборка и запуск
 
 ## Лицензия
 MIT

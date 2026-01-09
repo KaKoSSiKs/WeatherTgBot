@@ -95,24 +95,6 @@ export class LocationRepository {
   }
 
   /**
-   * Найти локацию по названию для пользователя
-   */
-  async findByUserIdAndName(
-    userId: number,
-    name: string
-  ): Promise<Location | null> {
-    return prisma.location.findFirst({
-      where: {
-        userId,
-        name: {
-          equals: name,
-          mode: 'insensitive',
-        },
-      },
-    });
-  }
-
-  /**
    * Подсчитать количество локаций пользователя
    */
   async countByUserId(userId: number): Promise<number> {

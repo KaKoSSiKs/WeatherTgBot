@@ -20,7 +20,7 @@ if ! command -v pnpm &> /dev/null; then
 fi
 
 # Проверка наличия .env файла
-if [ ! -f "bot/.env" ] && [ ! -f ".env" ]; then
+if [ ! -f "packages/backend/.env" ] && [ ! -f ".env" ]; then
     echo "Предупреждение: Файл .env не найден. Убедитесь, что он настроен."
 fi
 
@@ -38,13 +38,13 @@ fi
 
 if [ $PRISMA_FOUND -eq 0 ]; then
     echo "  Prisma клиент не найден. Генерация..."
-    cd bot || exit 1
+    cd packages/backend || exit 1
     pnpm prisma:generate
     if [ $? -ne 0 ]; then
         echo "Ошибка: Не удалось сгенерировать Prisma клиент."
         exit 1
     fi
-    cd .. || exit 1
+    cd ../.. || exit 1
     echo "  Prisma клиент успешно сгенерирован."
 else
     echo "  Prisma клиент найден."
@@ -52,9 +52,9 @@ fi
 
 # Проверка и создание базы данных
 echo "[2/4] Проверка базы данных..."
-if [ ! -f "bot/prisma/dev.db" ]; then
+if [ ! -f "packages/backend/prisma/dev.db" ] && [ ! -f "packages/backend/prisma/*.db" ]; then
     echo "  База данных не найдена. Выполнение миграций..."
-    cd bot || exit 1
+    cd packages/backend || exit 1
     # Устанавливаем DATABASE_URL по умолчанию, если не задан
     export DATABASE_URL="${DATABASE_URL:-file:./prisma/dev.db}"
     pnpm prisma migrate deploy
@@ -66,7 +66,7 @@ if [ ! -f "bot/prisma/dev.db" ]; then
             exit 1
         fi
     fi
-    cd .. || exit 1
+    cd ../.. || exit 1
     echo "  База данных успешно создана."
 else
     echo "  База данных найдена."
@@ -91,7 +91,7 @@ trap cleanup SIGINT SIGTERM
 
 # Запуск Telegram бота (бэкенд) в фоне
 echo "[3/4] Запуск Telegram бота (бэкенд)..."
-(cd bot && pnpm dev) &
+(cd packages/backend && pnpm dev) &
 BOT_PID=$!
 
 sleep 2

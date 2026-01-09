@@ -16,7 +16,7 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 REM Проверка наличия .env файла
-if not exist "bot\.env" if not exist ".env" (
+if not exist "packages\backend\.env" if not exist ".env" (
     echo Предупреждение: Файл .env не найден. Убедитесь, что он настроен.
 )
 
@@ -32,15 +32,15 @@ for /d %%d in ("node_modules\.pnpm\@prisma+client*") do (
 :prisma_check_done
 if %PRISMA_FOUND%==0 (
     echo   Prisma клиент не найден. Генерация...
-    cd bot
+    cd packages\backend
     call pnpm prisma:generate
     if errorlevel 1 (
         echo Ошибка: Не удалось сгенерировать Prisma клиент.
-        cd ..
+        cd ..\..
         pause
         exit /b 1
     )
-    cd ..
+    cd ..\..
     echo   Prisma клиент успешно сгенерирован.
 ) else (
     echo   Prisma клиент найден.
@@ -48,9 +48,9 @@ if %PRISMA_FOUND%==0 (
 
 REM Проверка и создание базы данных
 echo [2/4] Проверка базы данных...
-if not exist "bot\prisma\dev.db" (
+if not exist "packages\backend\prisma\*.db" (
     echo   База данных не найдена. Выполнение миграций...
-    cd bot
+    cd packages\backend
     REM Устанавливаем DATABASE_URL по умолчанию, если не задан
     if "%DATABASE_URL%"=="" set DATABASE_URL=file:./prisma/dev.db
     call pnpm prisma migrate deploy
@@ -59,12 +59,12 @@ if not exist "bot\prisma\dev.db" (
         call pnpm prisma migrate dev --name init
         if errorlevel 1 (
             echo Ошибка: Не удалось выполнить миграции базы данных.
-            cd ..
+            cd ..\..
             pause
             exit /b 1
         )
     )
-    cd ..
+    cd ..\..
     echo   База данных успешно создана.
 ) else (
     echo   База данных найдена.
@@ -76,7 +76,7 @@ echo.
 
 REM Запуск Telegram бота (бэкенд) в новом окне
 echo [3/4] Запуск Telegram бота (бэкенд)...
-start "Telegram Bot (Backend)" cmd /k "cd /d %~dp0bot && pnpm dev"
+start "Telegram Bot (Backend)" cmd /k "cd /d %~dp0packages\backend && pnpm dev"
 
 timeout /t 2 /nobreak >nul
 

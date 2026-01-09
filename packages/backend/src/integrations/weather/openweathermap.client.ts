@@ -264,7 +264,7 @@ export class OpenWeatherMapClient {
           throw error;
         }
 
-        const data = await response.json();
+        const data = await response.json() as any;
 
         // Проверка на ошибки в ответе (OpenWeatherMap иногда возвращает 200 с ошибкой)
         if (data.cod && data.cod !== '200' && data.cod !== 200) {

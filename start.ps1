@@ -13,7 +13,7 @@ if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
 }
 
 # Проверка наличия .env файла
-if (-not (Test-Path "bot\.env") -and -not (Test-Path ".env")) {
+if (-not (Test-Path "packages\backend\.env") -and -not (Test-Path ".env")) {
     Write-Host "Предупреждение: Файл .env не найден. Убедитесь, что он настроен." -ForegroundColor Yellow
 }
 
@@ -49,35 +49,49 @@ if (-not $prismaClientFound) {
 # Проверка и создание базы данных
 Write-Host "[2/4] Проверка базы данных..." -ForegroundColor Yellow
 $backendDir = Join-Path $PSScriptRoot "packages\backend"
-Push-Location $backendDir
-try {
-    # Устанавливаем DATABASE_URL по умолчанию, если не задан
-    if (-not $env:DATABASE_URL) {
-        # Используем PostgreSQL из docker-compose или SQLite для dev
-        if (Test-Path "docker-compose.yml") {
-            $env:DATABASE_URL = "postgresql://weather_user:weather_password@localhost:5432/weather_bot"
-        } else {
+$dbFiles = Get-ChildItem -Path "$backendDir\prisma" -Filter "*.db" -ErrorAction SilentlyContinue
+if (-not $dbFiles) {
+    Write-Host "  База данных не найдена. Выполнение миграций..." -ForegroundColor Yellow
+    Push-Location $backendDir
+    try {
+        # Устанавливаем DATABASE_URL по умолчанию, если не задан
+        if (-not $env:DATABASE_URL) {
             $env:DATABASE_URL = "file:./prisma/dev.db"
         }
-    }
-    
-    # Проверяем миграции
-    $migrateStatus = pnpm prisma migrate status 2>&1
-    if ($LASTEXITCODE -ne 0 -or $migrateStatus -match "following.*not.*applied" -or $migrateStatus -match "migration.*not.*applied") {
-        Write-Host "  Обнаружены неприменённые миграции. Применение..." -ForegroundColor Yellow
         pnpm prisma migrate deploy
         if ($LASTEXITCODE -ne 0) {
             Write-Host "  Попытка выполнить dev миграции..." -ForegroundColor Yellow
-            pnpm prisma migrate dev --name init
+            pnpm prisma migrate dev
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "Ошибка: Не удалось выполнить миграции базы данных." -ForegroundColor Red
+                exit 1
+            }
         }
-        Write-Host "  Миграции применены." -ForegroundColor Green
-    } else {
-        Write-Host "  База данных актуальна." -ForegroundColor Green
+        Write-Host "  База данных успешно создана." -ForegroundColor Green
+    } finally {
+        Pop-Location
     }
-} catch {
-    Write-Host "  Предупреждение: Не удалось проверить миграции. Продолжаем..." -ForegroundColor Yellow
-} finally {
-    Pop-Location
+} else {
+    # Проверяем, что все миграции применены
+    Push-Location $backendDir
+    try {
+        if (-not $env:DATABASE_URL) {
+            $env:DATABASE_URL = "file:./prisma/dev.db"
+        }
+        $migrateStatus = pnpm prisma migrate status 2>&1
+        if ($LASTEXITCODE -ne 0 -or $migrateStatus -match "following.*not.*applied") {
+            Write-Host "  Обнаружены неприменённые миграции. Применение..." -ForegroundColor Yellow
+            pnpm prisma migrate deploy
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "  Попытка выполнить dev миграции..." -ForegroundColor Yellow
+                pnpm prisma migrate dev
+            }
+        } else {
+            Write-Host "  База данных найдена и актуальна." -ForegroundColor Green
+        }
+    } finally {
+        Pop-Location
+    }
 }
 
 Write-Host ""

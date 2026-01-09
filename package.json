@@ -3,22 +3,21 @@
   "private": true,
   "packageManager": "pnpm@9.0.0",
   "workspaces": [
-    "bot",
     "apps/*",
     "packages/*"
   ],
   "scripts": {
     "prepare": "echo workspace ready",
-    "prisma:generate": "pnpm -F bot prisma:generate",
-    "prisma:migrate": "pnpm -F bot prisma:migrate",
+    "prisma:generate": "pnpm -F backend prisma:generate",
+    "prisma:migrate": "pnpm -F backend prisma:migrate",
     "dev": "pnpm -r dev",
-    "dev:bot": "pnpm -F bot dev",
+    "dev:bot": "pnpm -F backend dev",
     "dev:frontend": "pnpm -F miniapp dev",
     "dev:all": "pnpm -r --parallel dev",
     "build": "pnpm -r build",
-    "build:bot": "pnpm -F bot build",
+    "build:bot": "pnpm -F backend build",
     "build:frontend": "pnpm -F miniapp build",
-    "start:bot": "pnpm -F bot start",
+    "start:bot": "pnpm -F backend start",
     "start:frontend": "pnpm -F miniapp preview"
   }
 }

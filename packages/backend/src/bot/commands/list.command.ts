@@ -1,106 +1,61 @@
 /**
  * List Command
  * 
- * Команда /list - список всех уведомлений пользователя.
- * Тексты и форматирование перенесены из старого бота (bot/).
+ * Команда /list - список уведомлений пользователя.
  */
 
 import type { Context } from 'telegraf';
-import { UserRepository, LocationRepository } from '../../storage/prisma/repositories';
-import { NotificationService } from '../../services/notification';
+import { UserRepository } from '../../storage/prisma/repositories';
+import { NotificationRepository } from '../../storage/prisma/repositories/notification.repository';
 import { logger } from '../../shared/utils/logger';
-import type { Notification } from '@prisma/client';
-import type { RegularForecastParams } from '../../shared/types/notification.types';
-
-/**
- * Получить отображаемое название типа уведомления
- */
-function getDisplayType(type: string, subtype: string): string {
-  if (type === 'REGULAR_FORECAST') {
-    return subtype === 'current' ? 'Текущая погода' : 'Прогноз на сегодня';
-  } else if (type === 'WEATHER_EVENT') {
-    switch (subtype) {
-      case 'temperature_change':
-        return 'Изменение температуры';
-      case 'precipitation':
-        return 'Осадки';
-      case 'wind':
-        return 'Ветер';
-      default:
-        return 'Погодное событие';
-    }
-  }
-  return type;
-}
 
 /**
  * Обработать команду /list
  */
-export async function handleListCommand(
-  ctx: Context,
-  notificationService: NotificationService
-): Promise<void> {
+export async function handleListCommand(ctx: Context): Promise<void> {
   const telegramId = ctx.from?.id?.toString();
   
   if (!telegramId) {
     await ctx.reply('Ошибка: не удалось определить ваш ID.');
     return;
   }
-  
+
   try {
-    // Получаем все уведомления пользователя
-    const notifications = await notificationService.getUserNotifications(telegramId);
+    const userRepo = new UserRepository();
+    const notificationRepo = new NotificationRepository();
     
+    const user = await userRepo.findByTelegramId(telegramId);
+    if (!user) {
+      await ctx.reply('Пользователь не найден. Используйте /start для регистрации.');
+      return;
+    }
+
+    // Fetch all notifications for the user
+    const notifications = await notificationRepo.findByUserId(user.id);
+
     if (notifications.length === 0) {
       await ctx.reply('У вас пока нет уведомлений.\n\nИспользуйте /add для добавления.');
       return;
     }
-    
-    // Получаем локации для форматирования
-    const locationRepo = new LocationRepository();
-    const userRepo = new UserRepository();
-    const user = await userRepo.findByTelegramId(telegramId);
-    if (!user) {
-      await ctx.reply('Ошибка: пользователь не найден.');
-      return;
-    }
-    
-    // Форматируем список уведомлений (как в старом боте)
-    const notificationsList = await Promise.all(
-      notifications.map(async (notif, index) => {
+
+    // Format notifications list
+    const notificationsList = notifications
+      .map((notif, index) => {
         const status = notif.enabled ? '✅' : '❌';
-        const displayType = getDisplayType(notif.type, notif.subtype);
+        const params = notif.parameters as any;
+        const timeInfo = params?.time ? ` | ⏰ ${params.time}` : '';
+        const daysInfo = params?.days ? ` | 📅 ${params.days}` : '';
         
-        // Получаем информацию о локации
-        let locationInfo = '';
-        if (notif.locationId) {
-          const location = await locationRepo.findById(notif.locationId);
-          if (location) {
-            locationInfo = ` | 📍 ${location.name}`;
-          }
-        }
-        
-        // Получаем время и дни из parameters
-        let timeInfo = '';
-        let daysInfo = '';
-        if (notif.type === 'REGULAR_FORECAST') {
-          const params = notif.parameters as unknown as RegularForecastParams;
-          if (params.time) {
-            timeInfo = ` | ⏰ ${params.time}`;
-          }
-        }
-        
-        return `${index + 1}. ${status} ${displayType}${locationInfo}${timeInfo}${daysInfo}`;
+        return `${index + 1}. ${status} ${notif.type}${timeInfo}${daysInfo}`;
       })
-    );
-    
+      .join('\n');
+
     await ctx.reply(
-      `📋 Ваши уведомления (${notifications.length}):\n\n${notificationsList.join('\n')}\n\n` +
-      `Используйте /add для добавления нового уведомления.`
+      `📋 Ваши уведомления (${notifications.length}):\n\n${notificationsList}\n\n` +
+        `Используйте /add для добавления нового уведомления.`
     );
-    
-    logger.debug(`Notifications listed: ${notifications.length} for user ${telegramId}`);
-    
+
+    logger.info('Notifications listed:', { userId: user.id, count: notifications.length });
   } catch (error) {
     logger.error('Error in /list command:', error);
     await ctx.reply('Произошла ошибка при получении списка уведомлений.');

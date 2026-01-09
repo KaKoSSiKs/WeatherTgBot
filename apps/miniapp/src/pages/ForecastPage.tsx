@@ -19,14 +19,28 @@ export const ForecastPage = ({ location, fetchForecast, isLoading, onCreateAlert
     fetchForecast(location).then(setForecast);
   }, [location, fetchForecast]);
 
-  if (!location) return <div className="p-4 text-sm text-slate-600">Добавьте место, чтобы увидеть прогноз.</div>;
-  if (isLoading || !forecast) return <div className="p-4">Загрузка...</div>;
+  if (!location) {
+    return (
+      <div className="p-6 text-center">
+        <div className="text-4xl mb-3">📍</div>
+        <div className="text-sm sm:text-base text-slate-600">Добавьте место, чтобы увидеть прогноз</div>
+      </div>
+    );
+  }
+  if (isLoading || !forecast) {
+    return (
+      <div className="p-6 text-center">
+        <div className="animate-spin text-4xl mb-3">🌤️</div>
+        <div className="text-sm sm:text-base text-slate-600">Загрузка прогноза...</div>
+      </div>
+    );
+  }
 
   return (
     <>
-      <div className="flex justify-end mb-2">
+      <div className="flex justify-end mb-3 sm:mb-4">
         <button
-          className="px-3 py-2 rounded-xl bg-slate-100 text-sm"
+          className="px-4 py-2 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white text-xs sm:text-sm font-medium shadow-md active:scale-95 transition-all"
           onClick={() => setShowPrediction(true)}
         >
           🎰 Предсказание погоды

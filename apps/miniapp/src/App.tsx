@@ -68,8 +68,8 @@ export function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <div className="max-w-4xl mx-auto px-4 pb-16 md:pb-8">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-slate-50 to-blue-50 text-slate-900">
+      <div className="max-w-4xl mx-auto px-3 sm:px-4 pb-20 sm:pb-8">
         <Header initData={!!initData} onOpenBot={() => window.open('https://t.me/your_bot?start=miniapp', '_blank')} />
         <TabNav route={route} onChange={setRoute} />
 

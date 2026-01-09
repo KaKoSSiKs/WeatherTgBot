@@ -1,0 +1,27 @@
+# Frontend Dockerfile для разработки
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Устанавливаем pnpm
+RUN npm install -g pnpm@9.0.0
+
+# Копируем файлы конфигурации workspace
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+
+# Копируем файлы конфигурации miniapp
+COPY apps/miniapp/package.json ./apps/miniapp/
+COPY apps/miniapp/tsconfig.json ./apps/miniapp/
+COPY apps/miniapp/index.html ./apps/miniapp/
+COPY apps/miniapp/tailwind.config.cjs ./apps/miniapp/
+COPY apps/miniapp/postcss.config.cjs ./apps/miniapp/
+
+# Устанавливаем зависимости
+RUN pnpm install --frozen-lockfile
+
+WORKDIR /app/apps/miniapp
+
+EXPOSE 5173
+
+# Запускаем в dev режиме (hot reload)
+CMD ["pnpm", "dev", "--host", "0.0.0.0"]

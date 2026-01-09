@@ -1,0 +1,30 @@
+# Backend Dockerfile для разработки
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Устанавливаем pnpm
+RUN npm install -g pnpm@9.0.0
+
+# Копируем файлы конфигурации workspace
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+
+# Копируем файлы конфигурации backend
+COPY packages/backend/package.json ./packages/backend/
+COPY packages/backend/tsconfig.json ./packages/backend/
+COPY packages/backend/prisma ./packages/backend/prisma
+
+# Устанавливаем зависимости
+RUN pnpm install --frozen-lockfile
+
+# Генерируем Prisma Client
+WORKDIR /app/packages/backend
+RUN pnpm prisma:generate
+
+WORKDIR /app
+
+EXPOSE 3000
+
+# Запускаем в dev режиме (hot reload)
+CMD ["pnpm", "-F", "backend", "dev"]
+

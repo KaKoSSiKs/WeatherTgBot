@@ -1,113 +1,84 @@
-# ============================================================================
-# Stage 1: Dependencies
-# ============================================================================
-FROM node:20-alpine AS deps
+# Backend Dockerfile
+# Multi-stage build для оптимизации размера образа
 
-# Устанавливаем pnpm и OpenSSL (требуется для Prisma)
-RUN apk add --no-cache openssl libc6-compat && \
-    npm install -g pnpm@9.0.0
-
-WORKDIR /app
-
-# Копируем файлы для установки зависимостей
-COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml ./
-COPY packages/backend/package.json ./packages/backend/
-COPY packages/backend/prisma ./packages/backend/prisma/
-
-# Устанавливаем зависимости
-# Используем --frozen-lockfile для production, но разрешаем обновление если lockfile устарел
-RUN pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
-
-# ============================================================================
-# Stage 2: Build
-# ============================================================================
+# Stage 1: Build
 FROM node:20-alpine AS builder
 
-# Устанавливаем pnpm, prisma и OpenSSL (требуется для Prisma)
-RUN apk add --no-cache openssl libc6-compat && \
-    npm install -g pnpm@9.0.0 prisma@5.22.0
-
 WORKDIR /app
 
-# Копируем зависимости из deps stage
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/packages/backend/node_modules ./packages/backend/node_modules
+# Копируем файлы конфигурации workspace
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
-# Копируем исходный код
-COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml ./
-COPY packages/backend ./packages/backend/
+# Копируем файлы конфигурации backend
+COPY packages/backend/package.json ./packages/backend/
+COPY packages/backend/tsconfig.json ./packages/backend/
+COPY packages/backend/prisma ./packages/backend/prisma
 
-# Копируем entrypoint скрипт
-COPY packages/backend/docker-entrypoint.sh ./packages/backend/
-
-# Генерируем Prisma Client
-# Используем глобально установленный prisma
-WORKDIR /app/packages/backend
-RUN prisma generate --schema=./prisma/schema.prisma
-
-# Собираем TypeScript
-# Используем pnpm для запуска tsc (TypeScript установлен в devDependencies)
-RUN cd /app/packages/backend && pnpm exec tsc || \
-    (echo "⚠️  TypeScript compilation had errors, but continuing..." && \
-     echo "Note: Some TypeScript errors need to be fixed for production")
-
-# ============================================================================
-# Stage 3: Runtime
-# ============================================================================
-FROM node:20-alpine AS runtime
-
-# Устанавливаем только pnpm для production
+# Устанавливаем pnpm
 RUN npm install -g pnpm@9.0.0
 
+# Устанавливаем зависимости
+RUN pnpm install --frozen-lockfile
+
+# Копируем исходный код
+COPY packages/backend/src ./packages/backend/src
+
+# Генерируем Prisma Client
+WORKDIR /app/packages/backend
+RUN pnpm prisma:generate
+
+# Собираем проект
+RUN pnpm build
+
+# Stage 2: Production
+# Используем Debian-based образ для лучшей совместимости с Prisma
+FROM node:20-slim AS production
+
 WORKDIR /app
 
-# Создаем непривилегированного пользователя
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nodejs -u 1001
+# Устанавливаем OpenSSL для Prisma
+RUN apt-get update && \
+    apt-get install -y openssl && \
+    rm -rf /var/lib/apt/lists/*
 
-# Копируем только production зависимости
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/packages/backend/node_modules ./packages/backend/node_modules
+# Устанавливаем pnpm
+RUN npm install -g pnpm@9.0.0
 
-# Копируем собранный код
+# Копируем package.json и устанавливаем только production зависимости
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/backend/package.json ./packages/backend/
+
+# Устанавливаем все зависимости (включая dev для prisma) ДО создания пользователя
+RUN pnpm install --frozen-lockfile
+
+# Копируем собранные файлы и Prisma schema
 COPY --from=builder /app/packages/backend/dist ./packages/backend/dist
 COPY --from=builder /app/packages/backend/prisma ./packages/backend/prisma
-COPY --from=builder /app/packages/backend/package.json ./packages/backend/package.json
-COPY --from=builder /app/packages/backend/docker-entrypoint.sh ./packages/backend/
-COPY --from=builder /app/package.json ./
-COPY --from=builder /app/pnpm-workspace.yaml ./
 
-# Prisma Client будет сгенерирован в entrypoint скрипте при старте
-# Это гарантирует, что он всегда актуален
+# Генерируем Prisma Client в production (до создания пользователя)
+# Это также установит Prisma engines
+WORKDIR /app/packages/backend
+RUN pnpm prisma:generate
+WORKDIR /app
 
-# Устанавливаем PostgreSQL клиент и OpenSSL (требуется для Prisma)
-RUN apk add --no-cache postgresql-client openssl libc6-compat
+# Убеждаемся, что Prisma engines установлены и доступны
+# Проверяем наличие engines и даем права на чтение
+RUN chmod -R 755 /app/node_modules/.prisma 2>/dev/null || true && \
+    chmod -R 755 /app/node_modules/.pnpm/@prisma+engines* 2>/dev/null || true
 
-# Копируем entrypoint скрипт в финальное место
-COPY --from=builder /app/packages/backend/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+WORKDIR /app/packages/backend
 
-# Устанавливаем права
-RUN chown -R nodejs:nodejs /app
+# Создаем пользователя для безопасности
+RUN groupadd -r nodejs -g 1001 && \
+    useradd -r -g nodejs -u 1001 nodejs
+
+# Даем права на чтение/выполнение Prisma engines для пользователя nodejs
+RUN chown -R nodejs:nodejs /app/node_modules 2>/dev/null || true
 
 USER nodejs
 
-WORKDIR /app/packages/backend
-
-# Переменные окружения
-ENV NODE_ENV=production
-ENV PORT=3000
-
-# Expose порт для HTTP API (для будущего Mini App)
 EXPOSE 3000
 
-# Healthcheck (проверяет, что процесс запущен)
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-  CMD pgrep -f "node.*dist/index.js" || exit 1
-
-# Entrypoint
-ENTRYPOINT ["docker-entrypoint.sh"]
-
-# Запуск приложения
+# Запускаем приложение
 CMD ["node", "dist/index.js"]
 

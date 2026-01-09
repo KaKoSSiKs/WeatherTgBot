@@ -24,19 +24,30 @@ export const LocationSearch = ({ onAdd, onGeo }: Props) => {
   };
 
   return (
-    <div className="flex gap-2 mb-3">
+    <div className="flex flex-col sm:flex-row gap-2 mb-4">
       <input
-        className="flex-1 p-3 border border-slate-200 rounded-xl bg-white shadow-sm"
+        className="flex-1 p-3 sm:p-4 border-2 border-slate-200 rounded-xl bg-white shadow-sm focus:border-blue-500 focus:outline-none transition-colors text-sm sm:text-base"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder="Поиск города или координаты"
+        onKeyPress={(e) => e.key === 'Enter' && handleAdd()}
+        placeholder="🔍 Поиск города..."
       />
-      <button className="px-3 py-2 rounded-xl bg-slate-100" onClick={handleAdd}>
-        Добавить
-      </button>
-      <button className="px-3 py-2 rounded-xl bg-slate-100" onClick={handleGeo}>
-        Гео
-      </button>
+      <div className="flex gap-2">
+        <button 
+          className="flex-1 sm:flex-none px-4 py-3 rounded-xl bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium shadow-md active:scale-95 transition-all" 
+          onClick={handleAdd}
+        >
+          ➕ Добавить
+        </button>
+        {onGeo && (
+          <button 
+            className="px-4 py-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium shadow-sm active:scale-95 transition-all" 
+            onClick={handleGeo}
+          >
+            📍 Гео
+          </button>
+        )}
+      </div>
     </div>
   );
 };

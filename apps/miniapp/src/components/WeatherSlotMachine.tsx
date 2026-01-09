@@ -41,3 +41,6 @@ export const WeatherSlotMachine = ({ spinning, finalIcons }: Props) => {
 
 
 
+
+
+

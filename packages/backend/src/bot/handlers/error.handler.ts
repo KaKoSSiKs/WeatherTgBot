@@ -12,10 +12,14 @@ import {
   LocationNotOwnedError,
 } from '../../shared/errors/domain.errors';
 import { WeatherError, WeatherErrorCode } from '../../shared/types/weather.types';
+import { getNoCitiesKeyboard } from '../keyboards/currentWeather';
+import { SettingsCallback } from '../keyboards/callback_data';
+import { Markup } from 'telegraf';
 import { logger } from '../../shared/utils/logger';
 
 /**
  * Обработать ошибку и вернуть сообщение пользователю
+ * @returns Сообщение об ошибке или пустая строка, если ошибка уже обработана
  */
 export function handleError(ctx: Context, error: unknown): string {
   logger.error('Error in bot handler:', error);
@@ -25,7 +29,27 @@ export function handleError(ctx: Context, error: unknown): string {
   }
   
   if (error instanceof LocationNotSetError) {
-    return '❌ Локация не установлена.\n\nДобавьте локацию перед запросом погоды.';
+    // Возвращаем специальное сообщение с клавиатурой для добавления города
+    const message = '❌ Локация не установлена.\n\nДобавьте город, чтобы получать прогнозы погоды.';
+    const keyboard = Markup.inlineKeyboard([
+      [
+        Markup.button.callback('➕ Добавить город', SettingsCallback.create('cities', 'add', '0'))
+      ],
+      [
+        Markup.button.callback('⚙️ Настройки', SettingsCallback.create('main', 'show'))
+      ],
+      [
+        Markup.button.callback('🏠 Главное меню', 'nav:main_menu')
+      ]
+    ]);
+    
+    // Отправляем сообщение с клавиатурой
+    ctx.reply(message, keyboard).catch((err) => {
+      logger.error('Failed to send location error message:', err);
+    });
+    
+    // Возвращаем пустую строку, чтобы не отправлять сообщение дважды
+    return '';
   }
   
   if (error instanceof LocationNotFoundError) {
@@ -55,9 +79,12 @@ export async function errorHandlerMiddleware(
     await next();
   } catch (error) {
     const message = handleError(ctx, error);
-    await ctx.reply(message).catch((err) => {
-      logger.error('Failed to send error message:', err);
-    });
+    // handleError уже отправляет сообщение с клавиатурой для LocationNotSetError
+    if (message) {
+      await ctx.reply(message).catch((err) => {
+        logger.error('Failed to send error message:', err);
+      });
+    }
   }
 }
 

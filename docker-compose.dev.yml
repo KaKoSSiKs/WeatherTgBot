@@ -1,0 +1,95 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: weather-bot-postgres-dev
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-weatherbot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-weatherbot123}
+      POSTGRES_DB: ${POSTGRES_DB:-weatherbot}
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-weatherbot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - weather-bot-network
+    restart: unless-stopped
+
+  # Backend (Telegram Bot) - Development
+  backend:
+    build:
+      context: .
+      dockerfile: packages/backend/Dockerfile.dev
+    container_name: weather-bot-backend-dev
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      BOT_TOKEN: ${BOT_TOKEN}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-weatherbot}:${POSTGRES_PASSWORD:-weatherbot123}@postgres:5432/${POSTGRES_DB:-weatherbot}?schema=public
+      WEATHER_API_KEY: ${WEATHER_API_KEY}
+      OPENWEATHER_API_KEY: ${OPENWEATHER_API_KEY:-${WEATHER_API_KEY}}
+      WEATHER_API_PROVIDER: ${WEATHER_API_PROVIDER:-openweathermap}
+      WEATHER_API_LANG: ${WEATHER_API_LANG:-ru}
+      WEATHER_UNITS: ${WEATHER_UNITS:-metric}
+      TZ: ${TZ:-Europe/Moscow}
+      PORT: ${PORT:-3000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${PORT:-3000}:3000"
+    networks:
+      - weather-bot-network
+    restart: unless-stopped
+    volumes:
+      # Монтируем исходный код для hot reload
+      - ./packages/backend/src:/app/packages/backend/src:ro
+      - ./packages/backend/prisma:/app/packages/backend/prisma
+      - ./packages/backend/package.json:/app/packages/backend/package.json:ro
+      - ./packages/backend/tsconfig.json:/app/packages/backend/tsconfig.json:ro
+    command: >
+      sh -c "
+        echo 'Waiting for database...' &&
+        sleep 5 &&
+        cd /app/packages/backend &&
+        pnpm prisma migrate deploy &&
+        pnpm dev
+      "
+
+  # Frontend (Mini App) - Development
+  frontend:
+    build:
+      context: .
+      dockerfile: apps/miniapp/Dockerfile.dev
+    container_name: weather-bot-frontend-dev
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    networks:
+      - weather-bot-network
+    restart: unless-stopped
+    depends_on:
+      - backend
+    volumes:
+      # Монтируем исходный код для hot reload
+      - ./apps/miniapp/src:/app/apps/miniapp/src
+      - ./apps/miniapp/public:/app/apps/miniapp/public
+      - ./apps/miniapp/index.html:/app/apps/miniapp/index.html:ro
+      - ./apps/miniapp/package.json:/app/apps/miniapp/package.json:ro
+      - ./apps/miniapp/tsconfig.json:/app/apps/miniapp/tsconfig.json:ro
+      - ./apps/miniapp/tailwind.config.cjs:/app/apps/miniapp/tailwind.config.cjs:ro
+      - ./apps/miniapp/postcss.config.cjs:/app/apps/miniapp/postcss.config.cjs:ro
+
+networks:
+  weather-bot-network:
+    driver: bridge
+
+volumes:
+  postgres_data_dev:
+    driver: local
+

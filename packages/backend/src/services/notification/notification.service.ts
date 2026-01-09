@@ -2,632 +2,305 @@
  * Notification Service
  * 
  * Сервис для управления уведомлениями о погоде.
- * Содержит всю бизнес-логику работы с уведомлениями.
+ * Интегрируется с WeatherService для получения данных о погоде.
  */
 
-import {
-  NotificationRepository,
-  UserRepository,
-} from '../../storage/prisma/repositories';
-import type { WeatherService } from '../weather/weather.service';
-import type {
-  CreateNotificationData,
-  UpdateNotificationData,
-  NotificationParams,
-  RegularForecastParams,
-  TemperatureEventParams,
-  PrecipitationEventParams,
-  WindEventParams,
-  NotificationCheckResult,
-} from '../../shared/types/notification.types';
-import type { Notification, NotificationType, ScheduleType } from '@prisma/client';
-import {
-  UserNotFoundError,
-  LocationNotSetError,
-} from '../../shared/errors/domain.errors';
+import { NotificationRepository } from '../../storage/prisma/repositories/notification.repository';
+import { UserSettingsRepository } from '../../storage/prisma/repositories/user-settings.repository';
+import { LocationRepository } from '../../storage/prisma/repositories/location.repository';
+import { WeatherService } from '../weather/weather.service';
+import { scheduleEveryMinute, type CronJobHandle } from '../../bot/scheduler/cron';
 import { logger } from '../../shared/utils/logger';
+import { DateTime } from 'luxon';
+import type { Telegraf } from 'telegraf';
+
+// Типы параметров уведомлений
+export interface RegularForecastParams {
+  time: string; // "HH:mm"
+  targetDate?: string; // для once
+}
+
+export interface TemperatureEventParams {
+  direction: 'increase' | 'decrease' | 'any';
+  threshold: number;
+  checkIntervalHours: number;
+  lastTemperature?: number;
+}
+
+export interface PrecipitationEventParams {
+  precipitationType: 'rain' | 'snow' | 'any';
+  eventType: 'start' | 'end';
+  checkIntervalHours: number;
+  lastPrecipitationState?: boolean;
+}
+
+export interface WindEventParams {
+  threshold: number;
+  checkIntervalHours: number;
+}
+
+export type NotificationParams = 
+  | RegularForecastParams 
+  | TemperatureEventParams 
+  | PrecipitationEventParams 
+  | WindEventParams;
+
+// Тип подписки
+export type SubscriptionType = 'regular_forecast' | 'weather_event';
+
+// Подтип прогноза
+export type ForecastSubtype = 'current' | 'today' | 'tomorrow' | '3day' | '7day' | '10day';
+
+// Подтип события
+export type EventSubtype = 'temperature_change' | 'precipitation' | 'wind';
+
+// Расписание
+export type ScheduleType = 'daily' | 'weekdays' | 'weekends' | 'once';
 
 /**
- * Notification Service
+ * Notification Service Class
  */
 export class NotificationService {
+  private schedulerHandle: CronJobHandle | null = null;
+  private timezone: string;
+  private bot: Telegraf | null = null;
+
   constructor(
-    private notificationRepo: NotificationRepository = new NotificationRepository(),
-    private userRepo: UserRepository = new UserRepository(),
-    private weatherService: WeatherService
-  ) {}
+    private notificationRepo: NotificationRepository,
+    private settingsRepo: UserSettingsRepository,
+    private locationRepo: LocationRepository,
+    private weatherService: WeatherService,
+    timezone: string = 'Europe/Moscow'
+  ) {
+    this.timezone = timezone;
+  }
 
   /**
-   * Создать уведомление
-   * 
-   * @param data - Данные уведомления (включая telegramId)
+   * Установить бота для отправки сообщений
    */
-  async createNotification(data: CreateNotificationData): Promise<Notification> {
-    const userId = await this.getUserInternalId(data.telegramId);
+  setBot(bot: Telegraf): void {
+    this.bot = bot;
+  }
 
-    // Проверяем, что пользователь существует и локация доступна (через WeatherService)
-    // Это также проверит наличие дефолтной локации, если locationId не указан
-    await this.weatherService.getCurrentWeatherForUser(data.telegramId, data.locationId);
+  /**
+   * Создать новое уведомление
+   */
+  async createNotification(data: {
+    userId: number;
+    chatId: number;
+    locationId: number;
+    subscriptionType: SubscriptionType;
+    subtype: string;
+    parameters: NotificationParams;
+    schedule: ScheduleType;
+    customName?: string;
+  }): Promise<number> {
+    try {
+      const nextNotification = this.calculateNextNotification(
+        data.subscriptionType,
+        data.schedule,
+        data.parameters
+      );
 
-    // Вычисляем время следующего уведомления
-    const nextNotificationAt = this.calculateNextNotification(
-      data.schedule,
-      data.parameters
-    );
-
-    // Создаем уведомление
-    const notification = await this.notificationRepo.create({
-      user: {
-        connect: {
-          id: userId,
+      const notification = await this.notificationRepo.create({
+        user: {
+          connect: { id: data.userId }
         },
-      },
-      location: data.locationId
-        ? { connect: { id: data.locationId } }
-        : undefined,
-      type: data.type,
-      subtype: data.subtype,
-      schedule: data.schedule,
-      parameters: data.parameters as any, // JSON в Prisma
-      customName: data.customName,
-      nextNotificationAt,
-    });
+        location: data.locationId ? {
+          connect: { id: data.locationId }
+        } : undefined,
+        type: data.subscriptionType === 'regular_forecast' ? 'REGULAR_FORECAST' : 'WEATHER_EVENT',
+        subtype: data.subtype,
+        schedule: data.schedule.toUpperCase() as any,
+        parameters: data.parameters as any,
+        customName: data.customName || null,
+        enabled: true,
+        nextNotificationAt: nextNotification
+      });
 
-    logger.debug(`NotificationService: Created notification ${notification.id} for user ${userId}`);
-
-    return notification;
-  }
-
-  /**
-   * Обновить уведомление
-   */
-  async updateNotification(
-    notificationId: number,
-    userId: string | number,
-    data: UpdateNotificationData
-  ): Promise<Notification> {
-    // Проверяем принадлежность
-    const notification = await this.notificationRepo.findByIdAndUserId(
-      notificationId,
-      typeof userId === 'string' 
-        ? await this.getUserInternalId(userId)
-        : userId
-    );
-
-    if (!notification) {
-      throw new Error('Notification not found or does not belong to user');
+      logger.info(`Created notification ${notification.id} for user ${data.userId}`);
+      return notification.id;
+    } catch (error) {
+      logger.error('Error creating notification:', error);
+      throw error;
     }
-
-    // Если изменились schedule или parameters, пересчитываем nextNotificationAt
-    let nextNotificationAt = notification.nextNotificationAt;
-    if (data.schedule || data.parameters) {
-      const schedule = data.schedule || notification.schedule;
-      const parameters = (data.parameters || notification.parameters) as NotificationParams;
-      nextNotificationAt = this.calculateNextNotification(schedule, parameters);
-    }
-
-    // Обновляем уведомление
-    const updateData: any = {
-      ...data,
-      nextNotificationAt,
-    };
-
-    if (data.parameters) {
-      updateData.parameters = data.parameters as any;
-    }
-
-    return this.notificationRepo.update(notificationId, updateData);
-  }
-
-  /**
-   * Удалить уведомление
-   */
-  async deleteNotification(
-    notificationId: number,
-    userId: string | number
-  ): Promise<void> {
-    const notification = await this.notificationRepo.findByIdAndUserId(
-      notificationId,
-      typeof userId === 'string' 
-        ? await this.getUserInternalId(userId)
-        : userId
-    );
-
-    if (!notification) {
-      throw new Error('Notification not found or does not belong to user');
-    }
-
-    await this.notificationRepo.delete(notificationId);
   }
 
   /**
    * Получить все уведомления пользователя
    */
-  async getUserNotifications(
-    userId: string | number
-  ): Promise<Notification[]> {
-    const internalUserId = typeof userId === 'string' 
-      ? await this.getUserInternalId(userId)
-      : userId;
-
-    return this.notificationRepo.findByUserId(internalUserId);
+  async getUserNotifications(userId: number) {
+    return this.notificationRepo.findByUserId(userId);
   }
 
   /**
-   * Включить/выключить уведомление
+   * Получить уведомление по ID
    */
-  async toggleNotification(
-    notificationId: number,
-    userId: string | number,
-    enabled: boolean
-  ): Promise<Notification> {
-    const notification = await this.notificationRepo.findByIdAndUserId(
-      notificationId,
-      typeof userId === 'string' 
-        ? await this.getUserInternalId(userId)
-        : userId
-    );
-
-    if (!notification) {
-      throw new Error('Notification not found or does not belong to user');
-    }
-
-    return this.notificationRepo.setEnabled(notificationId, enabled);
+  async getNotificationById(id: number) {
+    return this.notificationRepo.findById(id);
   }
 
   /**
-   * Обработать уведомления, которые нужно отправить
-   * 
-   * Этот метод вызывается планировщиком (cron) для проверки и отправки уведомлений
-   */
-  async processNotifications(now: Date = new Date()): Promise<{
-    processed: number;
-    sent: number;
-    errors: number;
-  }> {
-    const notifications = await this.notificationRepo.findActiveDue(now);
-    
-    let processed = 0;
-    let sent = 0;
-    let errors = 0;
-
-    for (const notification of notifications) {
-      processed++;
-
-      try {
-        const checkResult = await this.checkNotification(notification, now);
-
-        if (checkResult.shouldNotify) {
-          // Здесь должна быть отправка уведомления через transport layer
-          // Пока просто логируем
-          logger.info(
-            `NotificationService: Should notify user ${notification.user.telegramId} ` +
-            `about notification ${notification.id} (${notification.subtype}): ${checkResult.reason}`
-          );
-
-          // Обновляем параметры с новым состоянием (для weather events)
-          const updatedParams = await this.updateNotificationParams(
-            notification,
-            checkResult
-          );
-
-          // Обновляем время следующего уведомления
-          const nextNotificationAt = checkResult.nextCheckAt || 
-            this.calculateNextNotification(
-              notification.schedule,
-              updatedParams || (notification.parameters as NotificationParams)
-            );
-
-          await this.notificationRepo.update(notification.id, {
-            nextNotificationAt,
-            lastCheckedAt: now,
-            parameters: updatedParams || notification.parameters,
-          });
-
-          sent++;
-        } else {
-          // Обновляем параметры даже если не отправляем (для сохранения состояния)
-          const updatedParams = await this.updateNotificationParams(
-            notification,
-            checkResult
-          );
-
-          // Обновляем время следующей проверки без отправки
-          const updateData: any = {
-            lastCheckedAt: now,
-          };
-
-          if (checkResult.nextCheckAt) {
-            updateData.nextNotificationAt = checkResult.nextCheckAt;
-          }
-
-          if (updatedParams) {
-            updateData.parameters = updatedParams;
-          }
-
-          await this.notificationRepo.update(notification.id, updateData);
-        }
-      } catch (error) {
-        errors++;
-        logger.error(
-          `NotificationService: Error processing notification ${notification.id}:`,
-          error
-        );
-      }
-    }
-
-    return { processed, sent, errors };
-  }
-
-  /**
-   * Проверить, нужно ли отправить уведомление
-   */
-  private async checkNotification(
-    notification: Notification & { user: { telegramId: string }; location: any },
-    now: Date
-  ): Promise<NotificationCheckResult & { newParams?: NotificationParams }> {
-    const params = notification.parameters as NotificationParams;
-
-    // Для регулярных прогнозов - проверяем расписание
-    if (notification.type === 'REGULAR_FORECAST') {
-      return this.checkRegularForecast(notification, params as RegularForecastParams, now);
-    }
-
-    // Для погодных событий - проверяем условия
-    if (notification.type === 'WEATHER_EVENT') {
-      return this.checkWeatherEvent(
-        notification,
-        params,
-        notification.subtype,
-        now
-      );
-    }
-
-    return { shouldNotify: false };
-  }
-
-  /**
-   * Обновить параметры уведомления с новым состоянием
-   */
-  private async updateNotificationParams(
-    notification: Notification,
-    checkResult: NotificationCheckResult & { newParams?: NotificationParams }
-  ): Promise<any | null> {
-    if (checkResult.newParams) {
-      return checkResult.newParams as any;
-    }
-    return null;
-  }
-
-  /**
-   * Проверить регулярный прогноз
-   */
-  private checkRegularForecast(
-    notification: Notification,
-    params: RegularForecastParams,
-    now: Date
-  ): NotificationCheckResult {
-    // Для регулярных прогнозов просто проверяем, что время пришло
-    // Расписание уже проверено в findActiveDue
-    return {
-      shouldNotify: true,
-      reason: 'Scheduled forecast notification',
-      nextCheckAt: this.calculateNextNotification(
-        notification.schedule,
-        params
-      ),
-    };
-  }
-
-  /**
-   * Проверить погодное событие
-   */
-  private async checkWeatherEvent(
-    notification: Notification & { user: { telegramId: string }; location: any },
-    params: NotificationParams,
-    subtype: string,
-    now: Date
-  ): Promise<NotificationCheckResult & { newParams?: NotificationParams }> {
-    try {
-      // Получаем текущую погоду для локации
-      const locationId = notification.locationId || undefined;
-      const weatherResult = await this.weatherService.getCurrentWeatherForUser(
-        notification.user.telegramId,
-        locationId
-      );
-
-      const weather = weatherResult.weather;
-
-      // Проверяем в зависимости от подтипа
-      switch (subtype) {
-        case 'temperature_change':
-          return this.checkTemperatureEvent(
-            params as TemperatureEventParams,
-            weather.temperature,
-            notification.lastCheckedAt
-          );
-
-        case 'precipitation':
-          return this.checkPrecipitationEvent(
-            params as PrecipitationEventParams,
-            weather,
-            notification.lastCheckedAt
-          );
-
-        case 'wind':
-          return this.checkWindEvent(
-            params as WindEventParams,
-            weather.windSpeed,
-            notification.lastCheckedAt
-          );
-
-        default:
-          return { shouldNotify: false };
-      }
-    } catch (error) {
-      logger.error(
-        `NotificationService: Error checking weather event for notification ${notification.id}:`,
-        error
-      );
-      return { shouldNotify: false };
-    }
-  }
-
-  /**
-   * Проверить событие изменения температуры
-   */
-  private checkTemperatureEvent(
-    params: TemperatureEventParams,
-    currentTemp: number,
-    lastCheckedAt: Date | null
-  ): NotificationCheckResult & { newParams?: TemperatureEventParams } {
-    // Если это первая проверка, сохраняем текущую температуру
-    if (!lastCheckedAt || params.lastTemperature === undefined) {
-      return {
-        shouldNotify: false,
-        nextCheckAt: this.addHours(new Date(), params.checkIntervalHours),
-        newParams: {
-          ...params,
-          lastTemperature: currentTemp,
-        },
-      };
-    }
-
-    const tempDiff = currentTemp - params.lastTemperature;
-    let shouldNotify = false;
-    let reason = '';
-
-    switch (params.direction) {
-      case 'increase':
-        shouldNotify = tempDiff >= params.threshold;
-        reason = shouldNotify
-          ? `Temperature increased by ${tempDiff.toFixed(1)}°C (threshold: ${params.threshold}°C)`
-          : '';
-        break;
-
-      case 'decrease':
-        shouldNotify = tempDiff <= -params.threshold;
-        reason = shouldNotify
-          ? `Temperature decreased by ${Math.abs(tempDiff).toFixed(1)}°C (threshold: ${params.threshold}°C)`
-          : '';
-        break;
-
-      case 'any':
-        shouldNotify = Math.abs(tempDiff) >= params.threshold;
-        reason = shouldNotify
-          ? `Temperature changed by ${Math.abs(tempDiff).toFixed(1)}°C (threshold: ${params.threshold}°C)`
-          : '';
-        break;
-    }
-
-    return {
-      shouldNotify,
-      reason,
-      nextCheckAt: this.addHours(new Date(), params.checkIntervalHours),
-      newParams: {
-        ...params,
-        lastTemperature: currentTemp,
-      },
-    };
-  }
-
-  /**
-   * Проверить событие осадков
-   */
-  private checkPrecipitationEvent(
-    params: PrecipitationEventParams,
-    weather: any, // CurrentWeather
-    lastCheckedAt: Date | null
-  ): NotificationCheckResult & { newParams?: PrecipitationEventParams } {
-    // Определяем, есть ли осадки сейчас
-    const hasPrecipitation = this.hasPrecipitation(weather);
-
-    // Если это первая проверка, сохраняем состояние
-    if (!lastCheckedAt || params.lastPrecipitationState === undefined) {
-      return {
-        shouldNotify: false,
-        nextCheckAt: this.addHours(new Date(), params.checkIntervalHours),
-        newParams: {
-          ...params,
-          lastPrecipitationState: hasPrecipitation,
-        },
-      };
-    }
-
-    let shouldNotify = false;
-    let reason = '';
-
-    if (params.eventType === 'start') {
-      // Уведомление при начале осадков
-      shouldNotify = hasPrecipitation && !params.lastPrecipitationState;
-      reason = shouldNotify
-        ? `Precipitation started (${params.precipitationType})`
-        : '';
-    } else {
-      // Уведомление при окончании осадков
-      shouldNotify = !hasPrecipitation && params.lastPrecipitationState;
-      reason = shouldNotify ? 'Precipitation ended' : '';
-    }
-
-    return {
-      shouldNotify,
-      reason,
-      nextCheckAt: this.addHours(new Date(), params.checkIntervalHours),
-      newParams: {
-        ...params,
-        lastPrecipitationState: hasPrecipitation,
-      },
-    };
-  }
-
-  /**
-   * Проверить событие ветра
-   */
-  private checkWindEvent(
-    params: WindEventParams,
-    currentWindSpeed: number,
-    lastCheckedAt: Date | null
-  ): NotificationCheckResult {
-    const shouldNotify = currentWindSpeed >= params.threshold;
-
-    return {
-      shouldNotify,
-      reason: shouldNotify
-        ? `Wind speed ${currentWindSpeed.toFixed(1)} m/s exceeds threshold ${params.threshold} m/s`
-        : undefined,
-      nextCheckAt: this.addHours(new Date(), params.checkIntervalHours),
-    };
-  }
-
-  /**
-   * Проверить, есть ли осадки
-   */
-  private hasPrecipitation(weather: any): boolean {
-    const condition = weather.condition?.toLowerCase() || '';
-    const description = weather.description?.toLowerCase() || '';
-
-    const hasRain = condition.includes('rain') || description.includes('дожд');
-    const hasSnow = condition.includes('snow') || description.includes('снег');
-
-    return hasRain || hasSnow;
-  }
-
-  /**
-   * Вычислить время следующего уведомления
+   * Рассчитать время следующего уведомления
    */
   private calculateNextNotification(
-    schedule: ScheduleType,
-    parameters: NotificationParams
-  ): Date | null {
-    const now = new Date();
-    const params = parameters as RegularForecastParams;
+    subscriptionType: string,
+    schedule: string,
+    params: NotificationParams
+  ): Date {
+    const now = DateTime.now().setZone(this.timezone);
 
-    switch (schedule) {
-      case 'DAILY': {
-        // Ежедневно в указанное время
-        const time = params.time || '09:00';
-        const [hours, minutes] = time.split(':').map(Number);
-        const next = new Date(now);
-        next.setHours(hours, minutes, 0, 0);
+    if (subscriptionType === 'regular_forecast') {
+      const forecastParams = params as RegularForecastParams;
+      const timeStr = forecastParams.time || '08:00';
+      const [hours, minutes] = timeStr.split(':').map(Number);
 
-        // Если время уже прошло сегодня, планируем на завтра
-        if (next <= now) {
-          next.setDate(next.getDate() + 1);
-        }
+      let nextDate = now.set({ hour: hours, minute: minutes, second: 0, millisecond: 0 });
 
-        return next;
+      // Если время уже прошло сегодня, переносим на завтра
+      if (nextDate <= now) {
+        nextDate = nextDate.plus({ days: 1 });
       }
 
-      case 'WEEKDAYS': {
-        // Только будни (пн-пт)
-        const time = params.time || '09:00';
-        const [hours, minutes] = time.split(':').map(Number);
-        const next = new Date(now);
-        next.setHours(hours, minutes, 0, 0);
-
-        // Если сегодня выходной, планируем на следующий понедельник
-        const dayOfWeek = next.getDay();
-        if (dayOfWeek === 0) {
-          // Воскресенье
-          next.setDate(next.getDate() + 1);
-        } else if (dayOfWeek === 6) {
-          // Суббота
-          next.setDate(next.getDate() + 2);
-        } else if (next <= now) {
-          // Если время прошло, планируем на завтра (если будний день)
-          next.setDate(next.getDate() + 1);
-          if (next.getDay() === 0) {
-            next.setDate(next.getDate() + 1); // Понедельник
-          } else if (next.getDay() === 6) {
-            next.setDate(next.getDate() + 2); // Понедельник
-          }
+      // Обработка расписания
+      if (schedule === 'weekdays') {
+        // Пропускаем выходные (6 = суббота, 7 = воскресенье в Luxon)
+        while (nextDate.weekday === 6 || nextDate.weekday === 7) {
+          nextDate = nextDate.plus({ days: 1 });
         }
-
-        return next;
+      } else if (schedule === 'weekends') {
+        // Пропускаем будни
+        while (nextDate.weekday >= 1 && nextDate.weekday <= 5) {
+          nextDate = nextDate.plus({ days: 1 });
+        }
+      } else if (schedule === 'once') {
+        // Разовое уведомление
+        if (forecastParams.targetDate) {
+          const targetDateTime = DateTime.fromISO(forecastParams.targetDate).setZone(this.timezone);
+          nextDate = targetDateTime.set({ hour: hours, minute: minutes, second: 0, millisecond: 0 });
+        }
       }
 
-      case 'WEEKENDS': {
-        // Только выходные (сб-вс)
-        const time = params.time || '09:00';
-        const [hours, minutes] = time.split(':').map(Number);
-        const next = new Date(now);
-        next.setHours(hours, minutes, 0, 0);
-
-        const dayOfWeek = next.getDay();
-        if (dayOfWeek >= 1 && dayOfWeek <= 5) {
-          // Будний день - планируем на ближайшие выходные
-          const daysUntilWeekend = dayOfWeek === 5 ? 1 : 6 - dayOfWeek;
-          next.setDate(next.getDate() + daysUntilWeekend);
-        } else if (next <= now) {
-          // Если время прошло, планируем на следующие выходные
-          next.setDate(next.getDate() + 7);
-        }
-
-        return next;
+      return nextDate.toJSDate();
+    } else {
+      // Для погодных событий проверяем каждые N часов
+      let checkInterval = 2;
+      
+      if ('checkIntervalHours' in params) {
+        checkInterval = (params as TemperatureEventParams | PrecipitationEventParams | WindEventParams).checkIntervalHours || 2;
       }
-
-      case 'ONCE': {
-        // Один раз в указанную дату
-        if (params.targetDate) {
-          const target = new Date(params.targetDate);
-          const time = params.time || '09:00';
-          const [hours, minutes] = time.split(':').map(Number);
-          target.setHours(hours, minutes, 0, 0);
-
-          // Если дата уже прошла, возвращаем null (не планируем)
-          if (target <= now) {
-            return null;
-          }
-
-          return target;
-        }
-
-        return null;
-      }
-
-      default:
-        return null;
+      
+      const nextCheck = now.plus({ hours: checkInterval });
+      return nextCheck.toJSDate();
     }
   }
 
   /**
-   * Добавить часы к дате
+   * Переключить состояние уведомления
    */
-  private addHours(date: Date, hours: number): Date {
-    const result = new Date(date);
-    result.setHours(result.getHours() + hours);
-    return result;
+  async toggleNotification(id: number): Promise<boolean> {
+    try {
+      const notification = await this.notificationRepo.findById(id);
+      if (!notification) return false;
+
+      const newEnabled = !notification.enabled;
+      let nextNotificationAt: Date | null = null;
+
+      if (newEnabled) {
+        const params = notification.parameters as any as NotificationParams;
+        nextNotificationAt = this.calculateNextNotification(
+          notification.type,
+          notification.schedule,
+          params
+        );
+      }
+
+      await this.notificationRepo.setEnabled(id, newEnabled);
+      if (nextNotificationAt) {
+        await this.notificationRepo.updateNextNotification(id, nextNotificationAt);
+      }
+
+      logger.info(`Toggled notification ${id} to ${newEnabled ? 'enabled' : 'disabled'}`);
+      return true;
+    } catch (error) {
+      logger.error('Error toggling notification:', error);
+      return false;
+    }
   }
 
   /**
-   * Получить внутренний ID пользователя по telegram_id
+   * Удалить уведомление
    */
-  private async getUserInternalId(telegramId: string): Promise<number> {
-    const user = await this.userRepo.findByTelegramId(telegramId);
-    if (!user) {
-      throw new UserNotFoundError(telegramId);
+  async deleteNotification(id: number): Promise<boolean> {
+    try {
+      await this.notificationRepo.delete(id);
+      logger.info(`Deleted notification ${id}`);
+      return true;
+    } catch (error) {
+      logger.error('Error deleting notification:', error);
+      return false;
     }
-    return user.id;
+  }
+
+  /**
+   * Запустить планировщик
+   */
+  startScheduler(): void {
+    if (this.schedulerHandle) {
+      logger.warn('Scheduler already running');
+      return;
+    }
+
+    this.schedulerHandle = scheduleEveryMinute(async () => {
+      await this.checkAndSendNotifications();
+    });
+
+    logger.info('Notification scheduler started');
+  }
+
+  /**
+   * Остановить планировщик
+   */
+  stopScheduler(): void {
+    if (this.schedulerHandle) {
+      this.schedulerHandle.stop();
+      this.schedulerHandle = null;
+      logger.info('Notification scheduler stopped');
+    }
+  }
+
+  /**
+   * Проверить и отправить уведомления
+   */
+  private async checkAndSendNotifications(): Promise<void> {
+    try {
+      const now = new Date();
+      const notifications = await this.notificationRepo.findActiveDue(now);
+
+      if (notifications.length === 0) return;
+
+      logger.info(`Found ${notifications.length} notifications to process`);
+
+      for (const notification of notifications) {
+        try {
+          // TODO: Реализовать отправку уведомлений
+          // await this.sendNotification(notification);
+          
+          // Обновляем время следующего уведомления
+          const params = notification.parameters as any as NotificationParams;
+          const nextNotification = this.calculateNextNotification(
+            notification.type,
+            notification.schedule,
+            params
+          );
+          await this.notificationRepo.updateNextNotification(notification.id, nextNotification);
+        } catch (error) {
+          logger.error(`Error processing notification ${notification.id}:`, error);
+        }
+      }
+    } catch (error) {
+      logger.error('Error in checkAndSendNotifications:', error);
+    }
   }
 }
 
