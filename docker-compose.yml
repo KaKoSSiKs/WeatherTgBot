@@ -7,6 +7,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-weatherbot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-weatherbot123}
       POSTGRES_DB: ${POSTGRES_DB:-weatherbot}
+      # Убеждаемся, что PostgreSQL слушает на всех интерфейсах
+      POSTGRES_HOST_AUTH_METHOD: trust
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -30,7 +32,8 @@ services:
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       BOT_TOKEN: ${BOT_TOKEN}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-weatherbot}:${POSTGRES_PASSWORD:-weatherbot123}@postgres:5432/${POSTGRES_DB:-weatherbot}?schema=public
+      # Используем имя контейнера вместо имени сервиса для надежности (если DNS не работает)
+      DATABASE_URL: postgresql://${POSTGRES_USER:-weatherbot}:${POSTGRES_PASSWORD:-weatherbot123}@weather-bot-postgres:5432/${POSTGRES_DB:-weatherbot}?schema=public
       WEATHER_API_KEY: ${WEATHER_API_KEY}
       OPENWEATHER_API_KEY: ${OPENWEATHER_API_KEY:-${WEATHER_API_KEY}}
       WEATHER_API_PROVIDER: ${WEATHER_API_PROVIDER:-openweathermap}
@@ -54,21 +57,44 @@ services:
       sh -c "
         echo '=== Starting Backend Service ===' &&
         echo 'Waiting for database connection...' &&
+        # Пробуем разные способы подключения к PostgreSQL
+        # 1. Имя сервиса (должно работать через Docker/Podman DNS)
+        # 2. Имя контейнера
+        # 3. IP адрес через getent
+        POSTGRES_HOSTS=\"postgres weather-bot-postgres\" &&
+        POSTGRES_IP=\"\" &&
+        for HOST in $$POSTGRES_HOSTS; do
+          echo \"Trying to resolve: $$HOST\" &&
+          IP=$$(getent hosts $$HOST 2>/dev/null | awk '{print $$1}' | head -1) &&
+          if [ ! -z \"$$IP\" ]; then
+            POSTGRES_IP=$$IP &&
+            echo \"Resolved $$HOST to IP: $$POSTGRES_IP\" &&
+            break
+          fi
+        done &&
+        # Если не удалось получить IP, используем имя контейнера напрямую
+        if [ -z \"$$POSTGRES_IP\" ]; then
+          echo \"DNS resolution failed, using container name: weather-bot-postgres\" &&
+          POSTGRES_IP=weather-bot-postgres
+        fi &&
         MAX_ATTEMPTS=90 &&
         ATTEMPT=0 &&
-        # Используем более надежную проверку: сначала TCP, потом pg_isready
-        until (timeout 2 bash -c 'cat < /dev/null > /dev/tcp/postgres/5432' 2>/dev/null && pg_isready -h postgres -p 5432 -U ${POSTGRES_USER:-weatherbot} -t 1 > /dev/null 2>&1); do
+        # Используем полученный IP или имя для подключения
+        until (timeout 2 bash -c \"cat < /dev/null > /dev/tcp/$$POSTGRES_IP/5432\" 2>/dev/null && pg_isready -h $$POSTGRES_IP -p 5432 -U ${POSTGRES_USER:-weatherbot} -t 1 > /dev/null 2>&1); do
           ATTEMPT=$$((ATTEMPT + 1)) &&
           if [ $$ATTEMPT -ge $$MAX_ATTEMPTS ]; then
             echo '' &&
             echo '=== ERROR: Database connection failed after 90 attempts (3 minutes) ===' &&
             echo 'Diagnostics:' &&
             echo '  1. Checking DNS resolution...' &&
-            (nslookup postgres 2>&1 || getent hosts postgres 2>&1 || echo '    DNS resolution failed') &&
-            echo '  2. Checking TCP connection...' &&
-            (timeout 2 bash -c 'cat < /dev/null > /dev/tcp/postgres/5432' 2>&1 && echo '    TCP connection OK' || echo '    TCP connection FAILED') &&
-            echo '  3. Checking pg_isready...' &&
-            (pg_isready -h postgres -p 5432 -U ${POSTGRES_USER:-weatherbot} -v 2>&1 || echo '    pg_isready failed') &&
+            (getent hosts postgres 2>&1 || nslookup postgres 2>&1 || echo '    DNS resolution failed') &&
+            POSTGRES_IP=$$(getent hosts postgres 2>/dev/null | awk '{print $$1}' | head -1) &&
+            if [ -z "$$POSTGRES_IP" ]; then POSTGRES_IP=postgres; fi &&
+            echo "  2. Using PostgreSQL IP: $$POSTGRES_IP" &&
+            echo '  3. Checking TCP connection...' &&
+            (timeout 2 bash -c "cat < /dev/null > /dev/tcp/$$POSTGRES_IP/5432" 2>&1 && echo '    TCP connection OK' || echo '    TCP connection FAILED') &&
+            echo '  4. Checking pg_isready...' &&
+            (pg_isready -h $$POSTGRES_IP -p 5432 -U ${POSTGRES_USER:-weatherbot} 2>&1 || echo '    pg_isready failed') &&
             echo '' &&
             echo 'Please check:' &&
             echo '  - PostgreSQL container is running: docker-compose ps' &&
@@ -113,6 +139,9 @@ services:
 networks:
   weather-bot-network:
     driver: bridge
+    name: weather-bot-network
+    # Явно указываем, что используем внутренний DNS
+    internal: false
 
 volumes:
   postgres_data:
