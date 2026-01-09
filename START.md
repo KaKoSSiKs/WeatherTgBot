@@ -1,6 +1,29 @@
 # Быстрый запуск на сервере
 
-## 1. Создайте .env файл
+## 🚀 Быстрый старт (рекомендуется)
+
+```bash
+cd /opt/WeatherTgBot
+
+# Сделайте скрипт исполняемым
+chmod +x start.sh
+
+# Запустите скрипт (он все сделает автоматически)
+./start.sh
+```
+
+Скрипт автоматически:
+- ✅ Проверит и создаст .env файл при необходимости
+- ✅ Очистит старые контейнеры
+- ✅ Соберет и запустит все сервисы
+- ✅ Проверит готовность сервисов
+- ✅ Покажет статус и полезные команды
+
+---
+
+## Ручная настройка
+
+### 1. Создайте .env файл
 
 ```bash
 cd /opt/WeatherTgBot
@@ -18,6 +41,15 @@ API_PORT=3001
 ## 2. Запустите через Docker
 
 ```bash
+# Если контейнеры уже существуют, остановите и удалите их
+docker-compose down --remove-orphans
+
+# Если все еще есть проблемы, принудительно удалите контейнеры
+# Для Docker:
+docker rm -f weather-bot-postgres weather-bot-backend weather-bot-frontend 2>/dev/null || true
+# Для Podman:
+# podman rm -f weather-bot-postgres weather-bot-backend weather-bot-frontend 2>/dev/null || true
+
 # Запустите все сервисы (postgres, backend, frontend)
 docker-compose up -d --build
 

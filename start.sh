@@ -1,120 +1,165 @@
 #!/bin/bash
-# Скрипт запуска WeatherTgBot (Telegram бот, бэкенд, фронтенд)
-# Использование: ./start.sh
 
-echo "========================================"
-echo "  WeatherTgBot - Запуск всех сервисов"
-echo "========================================"
-echo ""
+# Цвета для вывода
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
 
-# Получаем директорию скрипта (должно быть в начале!)
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+# Функция для вывода сообщений
+info() {
+    echo -e "${BLUE}[INFO]${NC} $1"
+}
 
-# Переходим в директорию скрипта
-cd "$SCRIPT_DIR"
+success() {
+    echo -e "${GREEN}[SUCCESS]${NC} $1"
+}
 
-# Проверка наличия pnpm
-if ! command -v pnpm &> /dev/null; then
-    echo "Ошибка: pnpm не найден. Установите pnpm: npm install -g pnpm"
+warning() {
+    echo -e "${YELLOW}[WARNING]${NC} $1"
+}
+
+error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# Проверка, что скрипт запущен из корня проекта
+if [ ! -f "docker-compose.yml" ]; then
+    error "Скрипт должен быть запущен из корня проекта (где находится docker-compose.yml)"
     exit 1
 fi
 
-# Проверка наличия .env файла
-if [ ! -f "packages/backend/.env" ] && [ ! -f ".env" ]; then
-    echo "Предупреждение: Файл .env не найден. Убедитесь, что он настроен."
+info "🚀 Запуск WeatherTgBot проекта..."
+
+# Шаг 1: Проверка .env файла
+info "📋 Проверка переменных окружения..."
+if [ ! -f ".env" ]; then
+    warning ".env файл не найден. Создаю шаблон..."
+    cat > .env << EOF
+BOT_TOKEN=ваш_токен_бота
+POSTGRES_USER=weatherbot
+POSTGRES_PASSWORD=weatherbot123
+POSTGRES_DB=weatherbot
+WEATHER_API_KEY=ваш_ключ_openweather
+OPENWEATHER_API_KEY=
+WEATHER_API_PROVIDER=openweathermap
+WEATHER_API_LANG=ru
+WEATHER_UNITS=metric
+TZ=Europe/Moscow
+PORT=3000
+API_PORT=3001
+FRONTEND_PORT=5173
+NODE_ENV=production
+EOF
+    error "Создан шаблон .env файла. Пожалуйста, заполните его и запустите скрипт снова!"
+    exit 1
 fi
 
-# Проверка и генерация Prisma клиента
-echo "[1/4] Проверка Prisma клиента..."
-PRISMA_FOUND=0
-if [ -d "node_modules/.pnpm" ]; then
-    for dir in node_modules/.pnpm/@prisma+client*; do
-        if [ -f "$dir/node_modules/@prisma/client/index.js" ]; then
-            PRISMA_FOUND=1
-            break
-        fi
-    done
+# Проверка обязательных переменных
+source .env
+if [ -z "$BOT_TOKEN" ] || [ "$BOT_TOKEN" = "ваш_токен_бота" ]; then
+    error "BOT_TOKEN не установлен в .env файле!"
+    exit 1
 fi
 
-if [ $PRISMA_FOUND -eq 0 ]; then
-    echo "  Prisma клиент не найден. Генерация..."
-    cd packages/backend || exit 1
-    pnpm prisma:generate
-    if [ $? -ne 0 ]; then
-        echo "Ошибка: Не удалось сгенерировать Prisma клиент."
-        exit 1
-    fi
-    cd ../.. || exit 1
-    echo "  Prisma клиент успешно сгенерирован."
+if [ -z "$WEATHER_API_KEY" ] || [ "$WEATHER_API_KEY" = "ваш_ключ_openweather" ]; then
+    error "WEATHER_API_KEY не установлен в .env файле!"
+    exit 1
+fi
+
+success "Переменные окружения проверены"
+
+# Шаг 2: Определение контейнеризатора
+info "🔍 Определение контейнеризатора..."
+if command -v docker &> /dev/null && docker ps &> /dev/null 2>&1; then
+    DOCKER_CMD="docker"
+    COMPOSE_CMD="docker-compose"
+    info "Используется Docker"
+elif command -v podman &> /dev/null; then
+    DOCKER_CMD="podman"
+    COMPOSE_CMD="podman-compose"
+    info "Используется Podman"
 else
-    echo "  Prisma клиент найден."
+    error "Не найден Docker или Podman!"
+    exit 1
 fi
 
-# Проверка и создание базы данных
-echo "[2/4] Проверка базы данных..."
-if [ ! -f "packages/backend/prisma/dev.db" ] && [ ! -f "packages/backend/prisma/*.db" ]; then
-    echo "  База данных не найдена. Выполнение миграций..."
-    cd packages/backend || exit 1
-    # Устанавливаем DATABASE_URL по умолчанию, если не задан
-    export DATABASE_URL="${DATABASE_URL:-file:./prisma/dev.db}"
-    pnpm prisma migrate deploy
-    if [ $? -ne 0 ]; then
-        echo "  Попытка выполнить dev миграции..."
-        pnpm prisma migrate dev --name init
-        if [ $? -ne 0 ]; then
-            echo "Ошибка: Не удалось выполнить миграции базы данных."
-            exit 1
-        fi
-    fi
-    cd ../.. || exit 1
-    echo "  База данных успешно создана."
+# Шаг 3: Остановка и удаление старых контейнеров
+info "🧹 Очистка старых контейнеров..."
+$COMPOSE_CMD down --remove-orphans 2>/dev/null || true
+
+# Принудительное удаление контейнеров по именам
+$DOCKER_CMD rm -f weather-bot-postgres weather-bot-backend weather-bot-frontend 2>/dev/null || true
+
+# Удаление всех контейнеров проекта
+$DOCKER_CMD ps -a --filter "name=weather-bot" --format "{{.Names}}" 2>/dev/null | xargs -r $DOCKER_CMD rm -f 2>/dev/null || true
+
+success "Старые контейнеры удалены"
+
+# Шаг 4: Сборка и запуск контейнеров
+info "🔨 Сборка и запуск контейнеров..."
+$COMPOSE_CMD up -d --build
+
+if [ $? -ne 0 ]; then
+    error "Ошибка при запуске контейнеров!"
+    exit 1
+fi
+
+success "Контейнеры запущены"
+
+# Шаг 5: Ожидание готовности сервисов
+info "⏳ Ожидание готовности сервисов (30 секунд)..."
+sleep 5
+
+# Проверка статуса контейнеров
+info "📊 Статус контейнеров:"
+$COMPOSE_CMD ps
+
+# Шаг 6: Проверка здоровья сервисов
+info "🏥 Проверка здоровья сервисов..."
+
+# Проверка PostgreSQL
+if $DOCKER_CMD exec weather-bot-postgres pg_isready -U ${POSTGRES_USER:-weatherbot} &>/dev/null; then
+    success "PostgreSQL готов"
 else
-    echo "  База данных найдена."
+    warning "PostgreSQL еще не готов, подождите..."
 fi
 
-echo ""
-echo "Запуск компонентов..."
-echo ""
+# Проверка Backend API
+sleep 5
+if curl -s http://localhost:${API_PORT:-3001}/health &>/dev/null; then
+    success "Backend API доступен"
+else
+    warning "Backend API еще не готов, проверьте логи"
+fi
 
-# Функция для очистки при выходе
-cleanup() {
-    echo ""
-    echo "Остановка сервисов..."
-    kill $BOT_PID $FRONTEND_PID 2>/dev/null
-    wait $BOT_PID $FRONTEND_PID 2>/dev/null
-    echo "Все сервисы остановлены."
-    exit 0
-}
-
-# Устанавливаем обработчик сигналов
-trap cleanup SIGINT SIGTERM
-
-# Запуск Telegram бота (бэкенд) в фоне
-echo "[3/4] Запуск Telegram бота (бэкенд)..."
-(cd packages/backend && pnpm dev) &
-BOT_PID=$!
-
+# Проверка Frontend
 sleep 2
+if curl -s http://localhost:${FRONTEND_PORT:-5173}/health &>/dev/null; then
+    success "Frontend доступен"
+else
+    warning "Frontend еще не готов, проверьте логи"
+fi
 
-# Запуск фронтенда (Mini App) в фоне
-echo "[4/4] Запуск фронтенда (Mini App)..."
-(cd apps/miniapp && pnpm dev) &
-FRONTEND_PID=$!
-
-sleep 2
-
+# Шаг 7: Вывод информации
 echo ""
-echo "========================================"
-echo "  Все сервисы запущены!"
-echo "========================================"
+success "✅ Проект запущен!"
 echo ""
-echo "Компоненты:"
-echo "  • Telegram бот (бэкенд): запущен (PID: $BOT_PID)"
-echo "  • Фронтенд (Mini App): запущен (PID: $FRONTEND_PID)"
+info "📝 Полезные команды:"
+echo "  Логи backend:    $COMPOSE_CMD logs -f backend"
+echo "  Логи frontend:   $COMPOSE_CMD logs -f frontend"
+echo "  Логи postgres:   $COMPOSE_CMD logs -f postgres"
+echo "  Статус:          $COMPOSE_CMD ps"
+echo "  Остановка:       $COMPOSE_CMD down"
 echo ""
-echo "Для остановки нажмите Ctrl+C"
+info "🌐 Доступные сервисы:"
+echo "  Backend API:     http://localhost:${API_PORT:-3001}"
+echo "  Frontend:        http://localhost:${FRONTEND_PORT:-5173}"
+echo "  PostgreSQL:      localhost:${POSTGRES_PORT:-5432}"
 echo ""
-
-# Ожидание завершения
-wait
-
+info "📋 Следующие шаги:"
+echo "  1. Настройте Nginx (используйте nginx.conf.container для проксирования на контейнеры)"
+echo "  2. Проверьте логи: $COMPOSE_CMD logs -f backend"
+echo "  3. Убедитесь, что бот отвечает в Telegram"
+echo ""

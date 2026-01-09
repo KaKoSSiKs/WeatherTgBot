@@ -1,5 +1,3 @@
-version: '3.8'
-
 # Production конфигурация без frontend контейнера
 # Frontend отдается через nginx на хосте
 
