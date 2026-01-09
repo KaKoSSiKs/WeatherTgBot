@@ -126,12 +126,23 @@ else
     warning "PostgreSQL еще не готов, подождите..."
 fi
 
-# Проверка Backend API
-sleep 5
-if curl -s http://localhost:${API_PORT:-3001}/health &>/dev/null; then
-    success "Backend API доступен"
-else
-    warning "Backend API еще не готов, проверьте логи"
+# Проверка Backend API (увеличиваем время ожидания для подключения к БД)
+info "Ожидание готовности Backend API (может занять до 60 секунд)..."
+BACKEND_READY=false
+for i in {1..12}; do
+    sleep 5
+    if curl -s http://localhost:${API_PORT:-3001}/health &>/dev/null; then
+        success "Backend API доступен"
+        BACKEND_READY=true
+        break
+    else
+        info "Попытка $i/12: Backend API еще не готов..."
+    fi
+done
+
+if [ "$BACKEND_READY" = false ]; then
+    warning "Backend API не отвечает. Проверьте логи: $COMPOSE_CMD logs -f backend"
+    warning "Возможные причины: проблемы с подключением к БД или миграциями"
 fi
 
 # Проверка Frontend
@@ -154,12 +165,22 @@ echo "  Статус:          $COMPOSE_CMD ps"
 echo "  Остановка:       $COMPOSE_CMD down"
 echo ""
 info "🌐 Доступные сервисы:"
-echo "  Backend API:     http://localhost:${API_PORT:-3001}"
-echo "  Frontend:        http://localhost:${FRONTEND_PORT:-5173}"
+echo "  Backend API:     http://localhost:${API_PORT:-3001} (или https://nikitintex.ru/api)"
+echo "  Frontend:        http://localhost:${FRONTEND_PORT:-5173} (или https://nikitintex.ru)"
 echo "  PostgreSQL:      localhost:${POSTGRES_PORT:-5432}"
 echo ""
 info "📋 Следующие шаги:"
-echo "  1. Настройте Nginx (используйте nginx.conf.container для проксирования на контейнеры)"
-echo "  2. Проверьте логи: $COMPOSE_CMD logs -f backend"
-echo "  3. Убедитесь, что бот отвечает в Telegram"
+echo "  1. Настройте Nginx:"
+echo "     sudo cp nginx.conf.container /etc/nginx/sites-available/weatherbot"
+echo "     sudo ln -s /etc/nginx/sites-available/weatherbot /etc/nginx/sites-enabled/"
+echo "     sudo nginx -t && sudo systemctl reload nginx"
+echo ""
+echo "  2. Проверьте логи backend:"
+echo "     $COMPOSE_CMD logs -f backend"
+echo ""
+echo "  3. Проверьте доступность сервисов:"
+echo "     curl https://nikitintex.ru/api/health"
+echo "     curl https://nikitintex.ru/"
+echo ""
+echo "  4. Убедитесь, что бот отвечает в Telegram"
 echo ""
