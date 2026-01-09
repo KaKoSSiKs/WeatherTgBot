@@ -52,8 +52,15 @@ services:
     command: >
       sh -c "
         echo 'Waiting for database...' &&
-        until pg_isready -h postgres -p 5432 -U ${POSTGRES_USER:-weatherbot} > /dev/null 2>&1; do
-          echo 'Database is not ready yet, waiting 2 seconds...'
+        MAX_ATTEMPTS=60 &&
+        ATTEMPT=0 &&
+        until pg_isready -h postgres -p 5432 -U ${POSTGRES_USER:-weatherbot} -t 1 > /dev/null 2>&1; do
+          ATTEMPT=$$((ATTEMPT + 1)) &&
+          if [ $$ATTEMPT -ge $$MAX_ATTEMPTS ]; then
+            echo 'ERROR: Database is not ready after 60 attempts (2 minutes). Check PostgreSQL container logs.' &&
+            exit 1
+          fi &&
+          echo \"Attempt $$ATTEMPT/$$MAX_ATTEMPTS: Database is not ready yet, waiting 2 seconds...\" &&
           sleep 2
         done &&
         echo 'Database is ready!' &&

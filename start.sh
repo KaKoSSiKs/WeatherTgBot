@@ -119,11 +119,33 @@ $COMPOSE_CMD ps
 # Шаг 6: Проверка здоровья сервисов
 info "🏥 Проверка здоровья сервисов..."
 
-# Проверка PostgreSQL
-if $DOCKER_CMD exec weather-bot-postgres pg_isready -U ${POSTGRES_USER:-weatherbot} &>/dev/null; then
-    success "PostgreSQL готов"
-else
-    warning "PostgreSQL еще не готов, подождите..."
+# Проверка PostgreSQL (с повторными попытками)
+info "Проверка готовности PostgreSQL..."
+POSTGRES_READY=false
+for i in {1..15}; do
+    # Проверяем, что контейнер запущен
+    if ! $DOCKER_CMD ps | grep -q weather-bot-postgres; then
+        error "Контейнер weather-bot-postgres не запущен!"
+        info "Проверьте логи: $COMPOSE_CMD logs postgres"
+        exit 1
+    fi
+    
+    # Проверяем готовность PostgreSQL
+    if $DOCKER_CMD exec weather-bot-postgres pg_isready -U ${POSTGRES_USER:-weatherbot} &>/dev/null 2>&1; then
+        success "PostgreSQL готов"
+        POSTGRES_READY=true
+        break
+    else
+        info "Попытка $i/15: PostgreSQL еще не готов, ждем 3 секунды..."
+        sleep 3
+    fi
+done
+
+if [ "$POSTGRES_READY" = false ]; then
+    warning "PostgreSQL не готов после 45 секунд ожидания."
+    warning "Проверьте логи PostgreSQL: $COMPOSE_CMD logs postgres"
+    warning "Проверьте статус: $COMPOSE_CMD ps"
+    info "Для диагностики запустите: chmod +x check-db.sh && ./check-db.sh"
 fi
 
 # Проверка Backend API (увеличиваем время ожидания для подключения к БД)
