@@ -13,9 +13,10 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-weatherbot}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
     networks:
       - weather-bot-network
     restart: unless-stopped
@@ -51,24 +52,44 @@ services:
       - ./packages/backend/prisma:/app/packages/backend/prisma
     command: >
       sh -c "
-        echo 'Waiting for database...' &&
-        MAX_ATTEMPTS=60 &&
+        echo '=== Starting Backend Service ===' &&
+        echo 'Waiting for database connection...' &&
+        MAX_ATTEMPTS=90 &&
         ATTEMPT=0 &&
-        until pg_isready -h postgres -p 5432 -U ${POSTGRES_USER:-weatherbot} -t 1 > /dev/null 2>&1; do
+        # Используем более надежную проверку: сначала TCP, потом pg_isready
+        until (timeout 2 bash -c 'cat < /dev/null > /dev/tcp/postgres/5432' 2>/dev/null && pg_isready -h postgres -p 5432 -U ${POSTGRES_USER:-weatherbot} -t 1 > /dev/null 2>&1); do
           ATTEMPT=$$((ATTEMPT + 1)) &&
           if [ $$ATTEMPT -ge $$MAX_ATTEMPTS ]; then
-            echo 'ERROR: Database is not ready after 60 attempts (2 minutes). Check PostgreSQL container logs.' &&
+            echo '' &&
+            echo '=== ERROR: Database connection failed after 90 attempts (3 minutes) ===' &&
+            echo 'Diagnostics:' &&
+            echo '  1. Checking DNS resolution...' &&
+            (nslookup postgres 2>&1 || getent hosts postgres 2>&1 || echo '    DNS resolution failed') &&
+            echo '  2. Checking TCP connection...' &&
+            (timeout 2 bash -c 'cat < /dev/null > /dev/tcp/postgres/5432' 2>&1 && echo '    TCP connection OK' || echo '    TCP connection FAILED') &&
+            echo '  3. Checking pg_isready...' &&
+            (pg_isready -h postgres -p 5432 -U ${POSTGRES_USER:-weatherbot} -v 2>&1 || echo '    pg_isready failed') &&
+            echo '' &&
+            echo 'Please check:' &&
+            echo '  - PostgreSQL container is running: docker-compose ps' &&
+            echo '  - PostgreSQL logs: docker-compose logs postgres' &&
+            echo '  - Network connectivity: docker network inspect weather-bot-network' &&
             exit 1
           fi &&
-          echo \"Attempt $$ATTEMPT/$$MAX_ATTEMPTS: Database is not ready yet, waiting 2 seconds...\" &&
+          if [ $$((ATTEMPT % 15)) -eq 0 ]; then
+            echo \"Attempt $$ATTEMPT/$$MAX_ATTEMPTS: Still waiting for database... (checking network connectivity)\"
+          fi &&
           sleep 2
         done &&
-        echo 'Database is ready!' &&
-        sleep 3 &&
+        echo '' &&
+        echo '=== Database is ready! ===' &&
+        sleep 2 &&
         cd /app/packages/backend &&
         export PRISMA_ENGINES_MIRROR=https://binaries.prisma.sh &&
         export PRISMA_CLI_BINARY_TARGET=linux-musl-openssl-1.1.x &&
-        pnpm prisma migrate deploy || echo 'Migration skipped or failed' &&
+        echo 'Running database migrations...' &&
+        pnpm prisma migrate deploy || echo 'Warning: Migration skipped or failed' &&
+        echo 'Starting application...' &&
         node dist/index.js
       "
 

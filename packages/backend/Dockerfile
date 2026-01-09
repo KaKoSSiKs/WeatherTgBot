@@ -36,9 +36,9 @@ FROM docker.io/library/node:20-slim AS production
 
 WORKDIR /app
 
-# Устанавливаем OpenSSL и postgresql-client для Prisma и проверки БД
+# Устанавливаем OpenSSL, postgresql-client и сетевые утилиты для Prisma и проверки БД
 RUN apt-get update && \
-    apt-get install -y openssl postgresql-client && \
+    apt-get install -y openssl postgresql-client dnsutils iputils-ping && \
     rm -rf /var/lib/apt/lists/*
 
 # Устанавливаем pnpm

@@ -149,22 +149,32 @@ if [ "$POSTGRES_READY" = false ]; then
 fi
 
 # Проверка Backend API (увеличиваем время ожидания для подключения к БД)
-info "Ожидание готовности Backend API (может занять до 60 секунд)..."
+info "Ожидание готовности Backend API (может занять до 3 минут из-за подключения к БД)..."
 BACKEND_READY=false
-for i in {1..12}; do
+for i in {1..36}; do
     sleep 5
     if curl -s http://localhost:${API_PORT:-3001}/health &>/dev/null; then
         success "Backend API доступен"
         BACKEND_READY=true
         break
     else
-        info "Попытка $i/12: Backend API еще не готов..."
+        if [ $((i % 6)) -eq 0 ]; then
+            info "Попытка $i/36: Backend API еще не готов... (проверяем подключение к БД)"
+            # Проверяем, что backend контейнер еще работает
+            if ! $DOCKER_CMD ps | grep -q weather-bot-backend; then
+                error "Backend контейнер остановился! Проверьте логи: $COMPOSE_CMD logs backend"
+                info "Запустите диагностику: chmod +x test-connection.sh && ./test-connection.sh"
+                exit 1
+            fi
+        fi
     fi
 done
 
 if [ "$BACKEND_READY" = false ]; then
-    warning "Backend API не отвечает. Проверьте логи: $COMPOSE_CMD logs -f backend"
-    warning "Возможные причины: проблемы с подключением к БД или миграциями"
+    warning "Backend API не отвечает после 3 минут ожидания."
+    warning "Проверьте логи: $COMPOSE_CMD logs -f backend"
+    warning "Запустите диагностику: chmod +x test-connection.sh && ./test-connection.sh"
+    warning "Возможные причины: проблемы с подключением к БД, миграциями или сетью"
 fi
 
 # Проверка Frontend
