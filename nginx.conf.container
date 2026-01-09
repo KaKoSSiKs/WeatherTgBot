@@ -21,10 +21,6 @@ server {
     ssl_session_cache shared:SSL:10m;
     ssl_session_timeout 10m;
 
-    # Root directory for Mini App
-    root /opt/WeatherTgBot/apps/miniapp/dist;
-    index index.html;
-
     # Logging
     access_log /var/log/nginx/weatherbot-access.log;
     error_log /var/log/nginx/weatherbot-error.log;
@@ -51,11 +47,36 @@ server {
         application/x-javascript
         image/svg+xml;
 
+    # Frontend proxy - проксируем на frontend контейнер
+    location / {
+        proxy_pass http://127.0.0.1:5173;
+        proxy_http_version 1.1;
+        
+        # Headers
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Port $server_port;
+        
+        # WebSocket support (если нужно)
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        
+        # Timeouts
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+        
+        # Buffering
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+
     # API proxy - проксируем запросы к бэкенду
     location /api/ {
-        # Проксируем на backend контейнер или localhost
-        # Если используете frontend контейнер, можно использовать: proxy_pass http://backend:3001;
-        # Если используете nginx на хосте, используйте: proxy_pass http://127.0.0.1:3001;
+        # Проксируем на backend контейнер
         proxy_pass http://127.0.0.1:3001;
         proxy_http_version 1.1;
         
@@ -96,33 +117,6 @@ server {
         proxy_pass http://127.0.0.1:3001/health;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
-    }
-
-    # Static assets with long cache
-    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot|webp|avif)$ {
-        expires 1y;
-        add_header Cache-Control "public, immutable";
-        access_log off;
-        
-        # CORS для статики (если нужно)
-        add_header Access-Control-Allow-Origin "*" always;
-    }
-
-    # SPA routing - все остальные запросы на index.html
-    location / {
-        try_files $uri $uri/ /index.html;
-        
-        # Не кешируем index.html
-        add_header Cache-Control "no-cache, no-store, must-revalidate";
-        add_header Pragma "no-cache";
-        add_header Expires "0";
-    }
-
-    # Deny access to hidden files
-    location ~ /\. {
-        deny all;
-        access_log off;
-        log_not_found off;
     }
 }
 

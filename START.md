@@ -18,7 +18,7 @@ API_PORT=3001
 ## 2. Запустите через Docker
 
 ```bash
-# Соберите и запустите
+# Запустите все сервисы (postgres, backend, frontend)
 docker-compose up -d --build
 
 # Проверьте статус
@@ -26,42 +26,43 @@ docker-compose ps
 
 # Посмотрите логи
 docker-compose logs -f backend
+docker-compose logs -f frontend
 ```
 
-## 3. Соберите мини-апп
+## 3. Настройте Nginx
+
+**Вариант A: Используете frontend контейнер (рекомендуется)**
 
 ```bash
-# Установите зависимости (если нужно)
-pnpm install
+# Используйте конфигурацию для проксирования на контейнер
+sudo cp nginx.conf.container /etc/nginx/sites-available/weatherbot
+sudo ln -s /etc/nginx/sites-available/weatherbot /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
 
-# Соберите
+**Вариант B: Отдаете статику напрямую через nginx на хосте**
+
+```bash
+# Соберите мини-апп локально
+pnpm install
 pnpm -F weather-miniapp build
 
-# Проверьте результат
-ls -la apps/miniapp/dist/
-```
-
-## 4. Настройте Nginx
-
-```bash
-# Скопируйте конфигурацию
+# Используйте конфигурацию для статики
 sudo cp nginx.conf /etc/nginx/sites-available/weatherbot
 sudo ln -s /etc/nginx/sites-available/weatherbot /etc/nginx/sites-enabled/
-
-# Проверьте конфигурацию
-sudo nginx -t
-
-# Перезагрузите
-sudo systemctl reload nginx
+sudo nginx -t && sudo systemctl reload nginx
 ```
 
-## 5. Проверьте работу
+## 4. Проверьте работу
 
 ```bash
 # API
 curl https://nikitintex.ru/api/health
 
-# Сайт
+# Frontend контейнер
+curl http://localhost:5173/health
+
+# Сайт через nginx
 curl https://nikitintex.ru/
 ```
 
@@ -77,8 +78,12 @@ docker-compose restart backend
 # Остановка
 docker-compose down
 
-# Обновление мини-аппа
+# Обновление мини-аппа (если используете статику на хосте)
 pnpm -F weather-miniapp build
+
+# Пересборка frontend контейнера
+docker-compose build frontend
+docker-compose up -d frontend
 ```
 
 ## Если что-то не работает

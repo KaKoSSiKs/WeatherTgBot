@@ -2,7 +2,7 @@
 # Multi-stage build для оптимизации размера образа
 
 # Stage 1: Build
-FROM node:20-alpine AS builder
+FROM docker.io/library/node:20-alpine AS builder
 
 WORKDIR /app
 
@@ -32,7 +32,7 @@ RUN pnpm build
 
 # Stage 2: Production
 # Используем Debian-based образ для лучшей совместимости с Prisma
-FROM node:20-slim AS production
+FROM docker.io/library/node:20-slim AS production
 
 WORKDIR /app
 
